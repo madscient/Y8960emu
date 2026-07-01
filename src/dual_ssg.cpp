@@ -53,10 +53,10 @@ void y8960ssg::write_data(uint8_t data)
 
 void y8960ssg::write(uint32_t offset, uint8_t data)
 {
-    if (offset > 0x1f) {
-	    m_ssg2.write(offset - 0x20, data);
+    if (offset & 1 == 0) {
+        write_address(data);
     } else {
-    	m_ssg1.write(offset, data);
+        write_data(data);
     }
 }
 

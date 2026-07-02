@@ -1,0 +1,8 @@
+build/
+*.suo
+*.pdb
+Debug/
+Release/
+*.o
+*.obj
+*.exe

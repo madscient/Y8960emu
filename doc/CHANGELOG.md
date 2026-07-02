@@ -3,9 +3,31 @@
 WIPからの主な変更点の記録（開発経緯）。最終的な仕様は `README.md` および
 `Y8960emu_Architecture.md` を参照。
 
+## スコープ変更: 拡張SSG部（dual_ssg）を削除
+
+当初は拡張SSG部（`ymfm::y8960ssg`, `src/dual_ssg.h/.cpp`）を本プロジェクトの
+スコープに含め、SSG1/SSG2の2回路を1つの`FmChip`インスタンスに内包する設計で
+実装していた。しかし以下の理由により、DCSG/SCCと同様にスコープ外とし、
+`dual_ssg.h/.cpp` および関連コードを削除した。
+
+- SSGはY8960においても機能拡張が無い（単体のYM2149相当を2回路搭載しているだけ）。
+  拡張のないチップをこのプロジェクトで再実装する意味は薄く、
+  [DSAemuEngine](https://github.com/madscient/DSAemuEngine) が
+  FmEngineApi準拠のDLLとして `SSG` のチップ名文字列を既に提供している。
+- 出力ミキシング方針（機能ブロックごとに `FmEngine_SetGain()` でパンを
+  指定する）を採用したことで、OPL2/OPLLは実機のI/Oポート構成に合わせて
+  `AddChip`を2回呼べば自然にパン設定できる一方、SSGは実機が単一I/Oポート対
+  (`7FEAh`/`7FEBh`)でSSG1/SSG2を共有する構造のため、1インスタンスに2回路を
+  内包する現行設計のままでは`SetGain`がSSG1/SSG2に対して同一のパンにしか
+  ならないという非対称な問題が判明した。DSAemuEngineの`SSG`を使えば
+  OPL2/OPLLと同様に`AddChip`を2回呼ぶ形に統一でき、この非対称性も解消できる。
+
+削除したファイル: `src/dual_ssg.h`, `src/dual_ssg.cpp`。
+`FmChip.h`・`CMakeLists.txt`・`_test/smoke_test.cpp`からも関連記述を削除。
+
 ## Layer 1: 拡張チップ実装 (src/)
 
-### dual_ssg.h/.cpp
+### dual_ssg.h/.cpp （削除済み。以下は削除前の開発記録）
 - `write()` の演算子優先順位バグ (`offset & 1 == 0` は `==` が `&` より優先されるため
   常に偽側に倒れていた) を `(offset & 1) == 0` に修正。
 - 旧WIPは `ssg_resampler`（ymfm内部でFM系チップにSSGを内蔵する際の補助クラス）を
@@ -59,18 +81,18 @@ WIPからの主な変更点の記録（開発経緯）。最終的な仕様は `
 - DCSG / SCC は本プロジェクトのスコープ外と決定。Y8960でもこの2チップは
   機能拡張が無く、[DSAemuEngine](https://github.com/madscient/DSAemuEngine)
   （FmEngineApi準拠、チップ名 `DCSG` / `SCC` を提供）がアプリ側で利用可能なため。
+- SSG も同様の理由に加え、実機のI/Oポート構造上の非対称性（本ページ冒頭参照）から、
+  後日スコープ外に変更（DSAemuEngineの`SSG`を利用する方針に統一）。
 
 ## 動作確認
 
 `smoke_test.cpp`:
 ```
-supported chips: 3
-  - Y8960_SSG
+supported chips: 2
   - Y8960_OPL2
   - Y8960_OPLLX
-[OK] AddChip(Y8960_SSG) -> id=0 nativeRate=447443
-[OK] AddChip(Y8960_OPL2) -> id=1 nativeRate=49715
-[OK] AddChip(Y8960_OPLLX) -> id=2 nativeRate=49715
+[OK] AddChip(Y8960_OPL2) -> id=0 nativeRate=49715
+[OK] AddChip(Y8960_OPLLX) -> id=1 nativeRate=49715
 [OK] AddChip(NOSUCHCHIP) -> -2 (expect FM_ERR_UNKNOWN_CHIP)
 [OK] Generate -> 0
 [OK] NaN check

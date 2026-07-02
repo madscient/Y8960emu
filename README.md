@@ -36,10 +36,12 @@ ymfm をベースに、Y8960固有の拡張ブロック（拡張SSG部・拡張O
   `opllex_bank_test.cpp` で無関係チャンネルへの影響がないこと、
   自チャンネルのBANK切替が実際に音色を変えること、
   リズムチャンネルもBANKに従うことの3点を回帰テスト済み。
-  **プリセット音色データ (`set_bank_instrument_data()` に渡す実データ) は
-  現状呼び出し側で用意する前提で、初期状態は全ゼロ。**
-  実データは一次情報 (IKAOPLL, Copyright-free OPLL(x) ROM patches) を
-  確認のうえ転記が必要。
+  **プリセット音色データは [Copyright free OPLL(x) ROM patches](https://github.com/plgDavid/misc/wiki/Copyright-free-OPLL(x)-ROM-patches)
+  (David Viens, Hubert Lamontagne 作, CC BY-SA) を4バンク分すべて転記済みで、
+  コンストラクタがデフォルトとして自動設定する。** メロディ15音色分(0x00-0x77)は
+  実データ、リズム3音色分(0x78-0x8F, BD/SD/TOM/CYM/HH相当)はこの一次情報に
+  含まれていないためゼロ埋めのプレースホルダのまま
+  （`y8960opllex::set_bank_instrument_data()` で差し替え可能）。
 
 ### Layer 2〜4: DLLファサード (src/)
 
@@ -74,6 +76,8 @@ supported chips: 3
 [OK] ch0 actually produces sound (sanity check)
 [OK] ch0's own BANK change actually alters ch0 output (control test)
 [OK] rhythm channel (BD) follows its own channel's BANK too
+[OK] default (CC BY-SA) presets produce sound
+[OK] default presets differ across all 4 banks
 ```
 
 ## ビルド
@@ -100,9 +104,12 @@ LD_LIBRARY_PATH=. ./smoke_test
 
 ## 未対応・既知の課題（アーキテクチャ設計書 5節も参照）
 
-1. **DCSG / SCC**: `Y8960_Specifications.xlsx` の該当シートが空欄のため未実装。
-2. **OPLLプリセット音色データ**: 上記の通り現状プレースホルダ(全ゼロ)。
-   `y8960opllex::set_bank_instrument_data()` で4バンク分をストリーム開始前に設定すること。
+1. **DCSG / SCC**: 本プロジェクトのスコープ外。DCSG・SCCはY8960でも機能拡張が
+   無いため、[DSAemuEngine](https://github.com/madscient/DSAemuEngine)
+   （FmEngineApi準拠、チップ名 `DCSG` / `SCC` を提供）をアプリ側で
+   併用する前提とする（詳細はアーキテクチャ設計書 0.1節）。
+2. **OPLLプリセット音色データ（リズム分のみ）**: メロディ15音色は実データ転記済み。
+   リズム3音色分(BD/SD/TOM/CYM/HH相当)のみプレースホルダ(全ゼロ)。
 3. **SSG/OPL2/OPLLの出力ミキシング**: 実機のI2S/ミキサー仕様が未確定のため、
    `FmChip.h` 側は暫定的に全チャンネル等分加算のモノラルミックスにしている。
 4. **read()系の実機仕様との突合**: 特にSSGのRead系ポート（`7FEAh`系の読み出し仕様）は
@@ -111,3 +118,16 @@ LD_LIBRARY_PATH=. ./smoke_test
    現状は `y8960opllex` を直接使うC++コードからしか設定できない。
    `FmEngine_SetMemory` の `FmMemoryType` 拡張などでDLL越しに設定できるようにするか、
    要検討。
+
+## ライセンス
+
+本プロジェクト自体は `LICENSE` (MIT) に従う。
+
+ただし `src/opllex.cpp` に内蔵しているOPLLプリセット音色データ
+(`s_opll_melody` / `s_opllx_melody` / `s_opllp_melody` / `s_vrc7_melody`) のみ、
+出典が異なるライセンス (CC BY-SA, Attribution-ShareAlike) のため、
+このデータを含む形で再配布する場合は出典を明記すること:
+
+> "Copyright free OPLL(x) ROM patches"
+> https://github.com/plgDavid/misc/wiki/Copyright-free-OPLL(x)-ROM-patches
+> David Viens, Hubert Lamontagne 作, CC BY-SA

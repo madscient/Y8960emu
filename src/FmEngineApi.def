@@ -1,0 +1,18 @@
+; FmEngineApi.def
+LIBRARY "YMFMEngine"
+
+EXPORTS
+    FmEngine_Create
+    FmEngine_Destroy
+    FmEngine_Inquiry
+    FmEngine_GetSupportedChip
+    FmEngine_AddChip
+    FmEngine_GetChipName
+    FmEngine_GetNativeRate
+    FmEngine_GetSampleRate
+    FmEngine_Write
+    FmEngine_SetGain
+    FmEngine_GetGain
+    FmEngine_SetMemory
+    FmEngine_GetMemorySize
+    FmEngine_Generate

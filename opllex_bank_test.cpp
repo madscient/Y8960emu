@@ -144,6 +144,31 @@ static std::vector<int32_t> run_rhythm_bank(uint8_t ch6_bank)
     return out;
 }
 
+// コンストラクタが自動設定する「実プリセットデータ」(CC BY-SA由来)が
+// バンクごとにちゃんと異なる音を出すことを確認する
+// (set_bank_instrument_data で上書きせず、デフォルトのまま使う)
+static std::vector<int32_t> run_default_preset(uint8_t bank, uint32_t instrument)
+{
+    NullInterface intf;
+    y8960opllex chip(intf);  // コンストラクタが4バンク分の実データを自動ロード
+    chip.reset();
+
+    chip.write(0, 0x40 + 0); chip.write(1, bank);
+    chip.write(0, 0x30 + 0); chip.write(1, (instrument << 4) | 0);
+    chip.write(0, 0x10 + 0); chip.write(1, 0x50);
+    chip.write(0, 0x20 + 0); chip.write(1, 0x10 | 0x08);
+
+    std::vector<int32_t> out;
+    for (int i = 0; i < 4000; i++)   // 実データはAR(アタックレート)が緩やかな楽器もあるため長めに生成
+    {
+        y8960opllex::output_data sample{};
+        chip.generate(&sample, 1);
+        out.push_back(sample.data[0]);
+        out.push_back(sample.data[1]);
+    }
+    return out;
+}
+
 int main()
 {
     auto baseline   = run(0, false);                              // ch1のBANKレジスタに触れない
@@ -179,6 +204,26 @@ int main()
     std::printf("[%s] rhythm channel (BD) follows its own channel's BANK too\n",
                 (rhythm_follows_bank && rhythm_nonzero) ? "OK" : "FAIL");
 
+    // デフォルトプリセット(実データ)がバンクごとに違う音になっているか
+    auto default_opll  = run_default_preset(y8960opllex::BANK_OPLL,   1); // Violin/Strings系
+    auto default_opllx = run_default_preset(y8960opllex::BANK_OPLL_X, 1);
+    auto default_opllp = run_default_preset(y8960opllex::BANK_OPLL_P, 1);
+    auto default_vrc7   = run_default_preset(y8960opllex::BANK_VRC7,   1);
+    bool default_nonzero = false;
+    for (auto v : default_opll) if (v != 0) default_nonzero = true;
+    bool default_banks_differ =
+        (default_opll != default_opllx) &&
+        (default_opll != default_opllp) &&
+        (default_opll != default_vrc7)  &&
+        (default_opllx != default_opllp) &&
+        (default_opllx != default_vrc7) &&
+        (default_opllp != default_vrc7);
+    std::printf("[%s] default (CC BY-SA) presets produce sound\n",
+                default_nonzero ? "OK" : "FAIL");
+    std::printf("[%s] default presets differ across all 4 banks\n",
+                default_banks_differ ? "OK" : "FAIL");
+
     return (a_matches_baseline && b_matches_baseline && any_nonzero &&
-            own_bank_changes_output && rhythm_follows_bank && rhythm_nonzero) ? 0 : 1;
+            own_bank_changes_output && rhythm_follows_bank && rhythm_nonzero &&
+            default_nonzero && default_banks_differ) ? 0 : 1;
 }

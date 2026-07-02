@@ -236,12 +236,9 @@ public:
 
 	// バンク別プリセットテーブルの設定 (ストリーム開始前に呼ぶこと)
 	//
-	// !!! TODO !!!
-	// 現状コンストラクタで全バンクとも全ゼロで初期化される。実データは
-	// 一次情報 (IKAOPLL: https://github.com/ika-musume/IKAOPLL,
-	//  Copyright-free OPLL(x) ROM patches:
-	//  https://github.com/plgDavid/misc/wiki/Copyright-free-OPLL(x)-ROM-patches)
-	// を確認のうえ正確に転記し、本メソッド経由で設定すること。
+	// デフォルトではコンストラクタが s_default_*_instruments[] (本ファイル内、
+	// plgDavid/misc wiki "Copyright free OPLL(x) ROM patches" (CC BY-SA) 由来)
+	// を全4バンクに設定済み。別データに差し替えたい場合のみ本メソッドを呼ぶこと。
 	void set_bank_instrument_data(preset_bank bank, uint8_t const *data)
 	{
 		m_fm.regs().set_bank_instrument_data(static_cast<uint32_t>(bank), data);

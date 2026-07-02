@@ -15,11 +15,9 @@ set(YMFM_DIR "${CMAKE_SOURCE_DIR}/extern/ymfm/src" CACHE PATH "ymfm src dir")
 # =======================================================
 add_library(Y8960EngineApi SHARED
     src/FmEngineApi.cpp
-    src/dual_ssg.cpp
     src/opl2ex.cpp
     src/opllex.cpp
     ${YMFM_DIR}/ymfm_opl.cpp
-    ${YMFM_DIR}/ymfm_ssg.cpp
     ${YMFM_DIR}/ymfm_adpcm.cpp
     ${YMFM_DIR}/ymfm_pcm.cpp   # ymfm_opl.cpp内のymf278b(OPL4)が参照するpcm_engine実装。
                                # 本DLLではOPL4は使わないが、リンクを満たすために必要。

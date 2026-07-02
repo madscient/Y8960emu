@@ -1,5 +1,6 @@
 // smoke_test.cpp
-// FmEngineApi 経由でY8960拡張3チップを一通り操作し、クラッシュしないか確認する。
+// FmEngineApi 経由でY8960拡張2チップを一通り操作し、クラッシュしないか確認する。
+// (拡張SSG部はスコープ外。DSAemuEngineの"SSG"をアプリ側で使う)
 #include "FmEngineApi.h"
 #include <cstdio>
 #include <vector>
@@ -29,7 +30,6 @@ int main() {
     for (uint32_t i = 0; i < FmEngine_Inquiry(eng); ++i)
         std::printf("  - %s\n", FmEngine_GetSupportedChip(eng, i));
 
-    checkChip(eng, "Y8960_SSG");
     checkChip(eng, "Y8960_OPL2");
     checkChip(eng, "Y8960_OPLLX");
 

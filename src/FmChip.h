@@ -1,18 +1,18 @@
 #pragma once
 // FmChip.h
-// Y8960拡張チップ (拡張SSG/拡張OPL2/拡張OPLL) を FmEngineApi 互換の
+// Y8960拡張チップ (拡張OPL2/拡張OPLL) を FmEngineApi 互換の
 // FmChip インターフェースにラップする。
 //
 // 構成は madscient/YMEngine の FmChip.h パターンを踏襲している
 // (LinearResampler / FmChip / MemoryYmfmInterface / FmChipImpl<T,Type>)。
 // 標準ymfmチップ(OPNA/OPL3等)が必要な場合は YMEngine 側の FmChip.h と
-// マージすること。本ファイルはY8960固有の3チップのみを対象とする。
+// マージすること。本ファイルはY8960固有の2チップのみを対象とする
+// （拡張SSG部はスコープ外。理由は README/doc/CHANGELOG.md 参照）。
 //
 // 依存: ymfm (https://github.com/aaronsgiles/ymfm)
-//       dual_ssg.h / opl2ex.h / opllex.h (本プロジェクト src/)
+//       opl2ex.h / opllex.h (本プロジェクト src/)
 //       C++17以上
 
-#include "dual_ssg.h"
 #include "opl2ex.h"
 #include "opllex.h"
 
@@ -27,7 +27,6 @@
 //  チップ種別列挙
 // =========================================================
 enum class ChipType {
-    Y8960_SSG,    // 拡張SSG部  (YM2149相当 x2回路)
     Y8960_OPL2,   // 拡張OPL2部 (YM3812相当 + ADPCM-B、1回路分)
     Y8960_OPLLX,  // 拡張OPLL部 (YM2413相当 + プリセット音色バンク切替、1回路分)
 };
@@ -37,7 +36,6 @@ enum class ChipType {
 //  Y8960 CartridgeはMSX用カートリッジのため、MSX標準クロックを既定値とする。
 // =========================================================
 namespace FmClock {
-    constexpr uint32_t Y8960_SSG   = 3'579'545;
     constexpr uint32_t Y8960_OPL2  = 3'579'545;
     constexpr uint32_t Y8960_OPLLX = 3'579'545;
 }
@@ -242,36 +240,23 @@ private:
         // 出力モードをTTypeで分類:
         //
         // Y8960実機はチップ外側に独立したデジタルミキサーを持ち、機能ブロック
-        // (拡張SSG部・拡張OPL2部・拡張OPLL部それぞれ)ごとにパンポットを
-        // 指定する設計になっている。そのため、チップ内部での左右パン付けは
-        // 行わず、各FmChipインスタンスはモノラル(L=R)を返すだけにとどめ、
-        // 実際のパン/ゲインは呼び出し側が FmEngine_SetGain(chip_id, gain_l, gain_r)
-        // で指定する前提とする。これはハードウェア設計と対応が取れた最終仕様であり、
-        // 「実機ミキサー仕様待ちの暫定」ではない。
-        //
-        //   Y8960_SSG   : OUTPUTS=6 (SSG1 3ch + SSG2 3ch)。SSG1/SSG2は
-        //                 単一のI/Oポート対(7FEAh/7FEBh)を共有する1機能ブロック
-        //                 のため、6ch全てを等分加算してモノラル化する。
+        // (拡張OPL2部・拡張OPLL部それぞれ)ごとにパンポットを指定する設計になっている。
+        // そのため、チップ内部での左右パン付けは行わず、各FmChipインスタンスは
+        // モノラル(L=R)を返すだけにとどめ、実際のパン/ゲインは呼び出し側が
+        // FmEngine_SetGain(chip_id, gain_l, gain_r) で指定する前提とする。
         //
         //   Y8960_OPL2  : OUTPUTS=2 (melody, rhythm)。ADPCM-Bは
         //                 y8960opl2ex::generate() 内で既に加算済み。
         //                 data[0]+data[1] をモノラル化 (Y8950と同型のMixMono)。
         //
         //   Y8960_OPLLX : OUTPUTS=2 (melody, rhythm)。OPLLと同型のMixMono。
-        constexpr bool isSsg =
-            (TType == ChipType::Y8960_SSG);
         constexpr bool isMixMono =
             kOutputs >= 2 &&
             (TType == ChipType::Y8960_OPL2 || TType == ChipType::Y8960_OPLLX);
 
         for (uint32_t i = 0; i < n; ++i) {
             m_chip.generate(&out_data);
-            if constexpr (isSsg) {
-                int32_t mix = 0;
-                for (uint32_t c = 0; c < kOutputs; ++c)
-                    mix += out_data.data[c];
-                out_l[i] = out_r[i] = static_cast<float>(mix) * kScale;
-            } else if constexpr (isMixMono) {
+            if constexpr (isMixMono) {
                 out_l[i] = out_r[i] = static_cast<float>(
                     out_data.data[0] + out_data.data[1]) * kScale;
             } else {
@@ -292,19 +277,13 @@ private:
 // =========================================================
 //  name() 特殊化
 // =========================================================
-template<> inline const char* FmChipImpl<ymfm::y8960ssg,    ChipType::Y8960_SSG  >::name() const { return "Y8960 Extended SSG";   }
 template<> inline const char* FmChipImpl<ymfm::y8960opl2ex, ChipType::Y8960_OPL2 >::name() const { return "Y8960 Extended OPL2";  }
 template<> inline const char* FmChipImpl<ymfm::y8960opllex, ChipType::Y8960_OPLLX>::name() const { return "Y8960 Extended OPLL"; }
 
 // =========================================================
 //  コンストラクタ特殊化
-//  Y8960拡張チップ3種はいずれも (ymfm_interface&) のみを取る
+//  Y8960拡張チップ2種はいずれも (ymfm_interface&) のみを取る
 // =========================================================
-template<>
-inline FmChipImpl<ymfm::y8960ssg, ChipType::Y8960_SSG>::FmChipImpl(uint32_t clock)
-    : m_chip(m_iface), m_clock(clock ? clock : FmClock::Y8960_SSG)
-{ m_chip.reset(); m_native_rate = m_chip.sample_rate(m_clock); }
-
 template<>
 inline FmChipImpl<ymfm::y8960opl2ex, ChipType::Y8960_OPL2>::FmChipImpl(uint32_t clock)
     : m_chip(m_iface), m_clock(clock ? clock : FmClock::Y8960_OPL2)
@@ -321,8 +300,6 @@ inline FmChipImpl<ymfm::y8960opllex, ChipType::Y8960_OPLLX>::FmChipImpl(uint32_t
 inline std::unique_ptr<FmChip> createChip(ChipType type, uint32_t clock = 0) {
     auto resolve = [](uint32_t c, uint32_t def) { return c ? c : def; };
     switch (type) {
-        case ChipType::Y8960_SSG:
-            return std::make_unique<FmChipImpl<ymfm::y8960ssg, ChipType::Y8960_SSG>>(resolve(clock, FmClock::Y8960_SSG));
         case ChipType::Y8960_OPL2:
             return std::make_unique<FmChipImpl<ymfm::y8960opl2ex, ChipType::Y8960_OPL2>>(resolve(clock, FmClock::Y8960_OPL2));
         case ChipType::Y8960_OPLLX:
@@ -342,10 +319,9 @@ struct ChipEntry {
 
 inline const ChipEntry* chipTable() {
     static const ChipEntry kTable[] = {
-        { "Y8960_SSG",   ChipType::Y8960_SSG,   FmClock::Y8960_SSG   },
         { "Y8960_OPL2",  ChipType::Y8960_OPL2,  FmClock::Y8960_OPL2  },
         { "Y8960_OPLLX", ChipType::Y8960_OPLLX, FmClock::Y8960_OPLLX },
-        { nullptr,       ChipType::Y8960_SSG,   0                    },  // sentinel
+        { nullptr,       ChipType::Y8960_OPL2,  0                    },  // sentinel
     };
     return kTable;
 }

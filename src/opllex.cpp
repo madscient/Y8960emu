@@ -253,7 +253,13 @@ std::string opllex_registers::log_keyon(uint32_t choffs, uint32_t opoffs)
 //  作者: David Viens, Hubert Lamontagne
 //  ライセンス: CC BY-SA (Attribution-ShareAlike)
 //
-//  各バンクとも18音色 x 8byte = 120byte。opllex_registers::INSTDATA_SIZE (0x90=144byte)
+//  各バンクとも18音色 x 8byte = 144byte (opllex_registers::INSTDATA_SIZE)。
+//  内訳: メロディ15音色(index0-14) は本セクション冒頭の出典通り。
+//  リズム3音色(index15-17, BD/SD/TOM/CYM/HH相当)はこの一次情報に個別の
+//  記載が無いため、同じ出典(CC BY-SA)を採用している ymfm::ym2413 の
+//  デフォルト音色データ (ymfm_opl.cpp, s_default_instruments[]) の
+//  リズム部分をそのまま転記した。実機のリズム音色ROMがバンクごとに
+//  異なるかどうかは未確認のため、ひとまず4バンク共通の値としている。
 //*********************************************************
 
 namespace {
@@ -346,8 +352,7 @@ uint8_t const s_vrc7_melody[][8] = {
 	{ 0x05, 0x01, 0x00, 0x00, 0xF8, 0xAA, 0x59, 0x55 }  //rhythm 3
 };
 
-// 15音色x8byte(120byte)を INSTDATA_SIZE(144byte)に展開し、
-// 残り24byte(リズム3音色分)はゼロ埋めする。
+// 18音色x8byte = INSTDATA_SIZE(144byte)分をそのままコピーする。
 void build_bank_table(uint8_t const (*melody)[8], uint8_t out[opllex_registers::INSTDATA_SIZE])
 {
 	std::memset(out, 0, opllex_registers::INSTDATA_SIZE);

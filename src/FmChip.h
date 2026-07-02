@@ -241,14 +241,21 @@ private:
 
         // 出力モードをTTypeで分類:
         //
-        //   Y8960_SSG   : OUTPUTS=6 (SSG1 3ch + SSG2 3ch)
-        //                 実機ミキサーの詳細仕様が未確定のため、暫定的に
-        //                 6ch全てを等分に加算してL/Rへ複製するモノラルミックスとする。
-        //                 (Y8960_Cartridge側のミキサー仕様が固まり次第見直すこと)
+        // Y8960実機はチップ外側に独立したデジタルミキサーを持ち、機能ブロック
+        // (拡張SSG部・拡張OPL2部・拡張OPLL部それぞれ)ごとにパンポットを
+        // 指定する設計になっている。そのため、チップ内部での左右パン付けは
+        // 行わず、各FmChipインスタンスはモノラル(L=R)を返すだけにとどめ、
+        // 実際のパン/ゲインは呼び出し側が FmEngine_SetGain(chip_id, gain_l, gain_r)
+        // で指定する前提とする。これはハードウェア設計と対応が取れた最終仕様であり、
+        // 「実機ミキサー仕様待ちの暫定」ではない。
+        //
+        //   Y8960_SSG   : OUTPUTS=6 (SSG1 3ch + SSG2 3ch)。SSG1/SSG2は
+        //                 単一のI/Oポート対(7FEAh/7FEBh)を共有する1機能ブロック
+        //                 のため、6ch全てを等分加算してモノラル化する。
         //
         //   Y8960_OPL2  : OUTPUTS=2 (melody, rhythm)。ADPCM-Bは
         //                 y8960opl2ex::generate() 内で既に加算済み。
-        //                 data[0]+data[1] をL/Rへ複製 (Y8950と同型のMixMono)。
+        //                 data[0]+data[1] をモノラル化 (Y8950と同型のMixMono)。
         //
         //   Y8960_OPLLX : OUTPUTS=2 (melody, rhythm)。OPLLと同型のMixMono。
         constexpr bool isSsg =

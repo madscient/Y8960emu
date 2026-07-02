@@ -1,84 +1,62 @@
 # Y8960emu
 
-Y8960（Y8960_Cartridgeに搭載予定の統合音源チップ）のエミュレーター。
-ymfm をベースに、Y8960固有の拡張ブロック（拡張SSG部・拡張OPL2部・拡張OPLL部）を
-個別クラスとして実装し、FmEngineApi互換のDLL (`Y8960EngineApi`) にまとめたもの。
+[Y8960](https://github.com/hra1129/Y8960_Cartridge)（MSX用サウンドカートリッジ
+Y8960 Cartridge に搭載予定の統合音源チップ）のソフトウェアエミュレーター。
 
-設計の詳細は `Y8960emu_Architecture.md`（アーキテクチャ設計書）を参照。
+[ymfm](https://github.com/aaronsgiles/ymfm) をコアとして、Y8960固有の拡張ブロック
+（拡張SSG部・拡張OPL2部・拡張OPLL部）を個別クラスとして実装し、
+[FmEngineApi](https://github.com/madscient/FMEngineTest) 互換のDLL
+(`Y8960EngineApi`) にまとめたもの。
 
-## このセッションでの変更点
+設計の詳細は [`Y8960emu_Architecture.md`](Y8960emu_Architecture.md)、
+開発経緯は [`CHANGELOG.md`](CHANGELOG.md) を参照。
 
-### Layer 1: 拡張チップ実装 (src/)
+## 対応チップ
 
-- **`dual_ssg.h/.cpp`**: `write()` の演算子優先順位バグ (`offset & 1 == 0`) を修正。
-  `ssg_engine` を直接 `clock()`/`output()` して2回路分をミックスする `generate()` を実装
-  （旧WIPは `ssg_resampler` を誤用しておりコンパイル不可だった）。
-- **`opl2ex.h/.cpp`**: `ym3812` への「継承」をやめ「合成」に変更。
-  ymfm内部の `fm_engine_base<opl_registers_base<N>>` は out-of-line
-  テンプレート実装 (`ymfm_fm.ipp`) に依存しており、ymfm本体の.cpp群の外から
-  直接叩くとビルド環境によってはリンクエラーになる。`ym3812` の公開APIのみを
-  経由することでこれを回避。ADPCM-Bレジスタのルーティングは `ymfm::y8950`
-  の実装（`ymfm_opl.cpp`）に準拠。
-- **`opllex.h/.cpp`**: **v2設計に変更（当初のv1設計には実害のあるバグがあったため）。**
-  v1は `opll_base` を継承し、BANKレジスタ書き込み時に `set_instrument_data()` で
-  チップ全体の音色テーブルを丸ごと差し替える方式だったが、これだと
-  **あるチャンネルのBANK書き込みが他の全チャンネルの音色まで巻き込んで
-  変えてしまう（後勝ち）** という、機能の目的（チャンネルごとに独立して
-  OPLL/OPLL-X/OPLL-P/VRC7を選べること）そのものを壊す欠陥があった。
-  v2では `ymfm::opll_registers` を丸ごとフォークした `opllex_registers` を新設し、
-  チャンネルごとに現在のBANK選択を保持したうえで、音色キャッシュ計算時に
-  「そのチャンネルが選んでいるバンクのテーブル」を参照するよう変更。
-  これによりチャンネルごとに異なるバンクを"同時に"鳴らせる。
-  リズムチャンネル(ch6-8, リズムモード時)もメロディチャンネルと同じ
-  `ch_bank()`参照ロジックを分岐せず共通で使っており、BANKレジスタに従う
-  （実用上は全バンクのリズム音色が同一内容である想定のため通常は聞こえ方に
-  影響しないが、特別扱いする理由がない限り分岐を増やさない方針とした）。
-  `opllex_bank_test.cpp` で無関係チャンネルへの影響がないこと、
-  自チャンネルのBANK切替が実際に音色を変えること、
-  リズムチャンネルもBANKに従うことの3点を回帰テスト済み。
-  **プリセット音色データは [Copyright free OPLL(x) ROM patches](https://github.com/plgDavid/misc/wiki/Copyright-free-OPLL(x)-ROM-patches)
-  (David Viens, Hubert Lamontagne 作, CC BY-SA) を4バンク分すべて転記済みで、
-  コンストラクタがデフォルトとして自動設定する。** メロディ15音色分(0x00-0x77)は
-  実データ、リズム3音色分(0x78-0x8F, BD/SD/TOM/CYM/HH相当)はこの一次情報に
-  含まれていないためゼロ埋めのプレースホルダのまま
-  （`y8960opllex::set_bank_instrument_data()` で差し替え可能）。
+`FmEngine_AddChip()` に渡すチップ名文字列と、対応するY8960の機能ブロック。
 
-### Layer 2〜4: DLLファサード (src/)
+| チップ名 | Y8960の機能ブロック | 実装クラス | 備考 |
+|---|---|---|---|
+| `Y8960_SSG`   | 拡張SSG部  | `ymfm::y8960ssg`    | YM2149相当 x2回路を1インスタンスに内包（単一I/Oポート対のため） |
+| `Y8960_OPL2`  | 拡張OPL2部 | `ymfm::y8960opl2ex` | YM3812相当 + ADPCM-B、1回路分。実機は2回路搭載のため`AddChip`を2回呼ぶ |
+| `Y8960_OPLLX` | 拡張OPLL部 | `ymfm::y8960opllex` | YM2413相当 + チャンネル独立プリセット音色バンク切替、1回路分。同様に2回路分は`AddChip`を2回 |
 
-- `FmChip.h`: 新規作成。YMEngine (madscient/YMEngine) の実装パターンを踏襲し、
-  `ChipType::Y8960_SSG` / `Y8960_OPL2` / `Y8960_OPLLX` を追加。
-- `FmEngine.h` / `FmEngineApi.h` / `FmEngineApi.cpp` / `FmEngineApi.def` / `FmEngineApi.rc`:
-  YMEngineから無変更で流用（チップ非依存の汎用層のため）。
+DCSG・SCCは本プロジェクトのスコープ外。[スコープについて](#スコープdcsg--sccは対象外)を参照。
 
-### 動作確認
+## 拡張OPLL部: チャンネル独立プリセット音色バンク
 
-`smoke_test.cpp` で以下を確認済み（Linux, g++ 13, `-std=c++17`）:
+標準OPLL(YM2413)レジスタ(0x00-0x3F)に加え、新設のBANKレジスタ(0x40-0x48、
+ch0-ch8に対応)でチャンネルごとに音色プリセットを選べる。
 
-```
-supported chips: 3
-  - Y8960_SSG
-  - Y8960_OPL2
-  - Y8960_OPLLX
-[OK] AddChip(Y8960_SSG) -> id=0 nativeRate=447443
-[OK] AddChip(Y8960_OPL2) -> id=1 nativeRate=49715
-[OK] AddChip(Y8960_OPLLX) -> id=2 nativeRate=49715
-[OK] AddChip(NOSUCHCHIP) -> -2 (expect FM_ERR_UNKNOWN_CHIP)
-[OK] Generate -> 0
-[OK] NaN check
-[OK] Inf check
-```
+| BANK値 | プリセット |
+|---|---|
+| 0 | OPLL (YM2413 標準) |
+| 1 | OPLL-X (YM2423相当) |
+| 2 | OPLL-P (YMF281相当) |
+| 3 | VRC7 (DS1001相当) |
 
-`opllex_bank_test.cpp` でチャンネル独立バンクの回帰テストも実施済み:
+チャンネルごとに異なるバンクを同時に選択・再生できる（`opllex_bank_test.cpp`で回帰テスト済み）。
 
-```
-[OK] ch1 BANK=OPLL write does not affect ch0 output
-[OK] ch1 BANK=VRC7 write does not affect ch0 output
-[OK] ch0 actually produces sound (sanity check)
-[OK] ch0's own BANK change actually alters ch0 output (control test)
-[OK] rhythm channel (BD) follows its own channel's BANK too
-[OK] default (CC BY-SA) presets produce sound
-[OK] default presets differ across all 4 banks
-```
+プリセット音色データはコンストラクタが自動設定する。メロディ15音色分は
+[Copyright free OPLL(x) ROM patches](https://github.com/plgDavid/misc/wiki/Copyright-free-OPLL(x)-ROM-patches)
+(CC BY-SA)、リズム3音色分（4バンク共通）は同一出典を採用している ymfm
+(`ym2413::s_default_instruments`) から転記したもの。差し替えたい場合は
+`y8960opllex::set_bank_instrument_data()` を使う。
+
+## 出力とミキシング
+
+各`FmChip`インスタンス（Y8960_SSG/Y8960_OPL2/Y8960_OPLLXそれぞれ）は内部で
+モノラル(L=R)を生成する。実機はチップ外側に独立したデジタルミキサーを持ち、
+機能ブロックごとにパンポットを指定する設計のため、左右のパン・音量は
+呼び出し側が `FmEngine_SetGain(handle, chip_id, gain_l, gain_r)` で指定する。
+
+## スコープ: DCSG / SCC は対象外
+
+DCSG・SCCはY8960においても機能拡張が無い（単体のSN76489相当／Konami SCC相当を
+そのまま搭載しているだけ）ため、本プロジェクトでは対象としない。
+[DSAemuEngine](https://github.com/madscient/DSAemuEngine)
+（FmEngineApi準拠、チップ名 `DCSG` / `SCC` を提供）をアプリ側で
+併用する想定とする。
 
 ## ビルド
 
@@ -89,7 +67,9 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-Linux上でCMakeを使わず直接確認する場合:
+成果物: `build/bin/Y8960EngineApi.dll`（Windows）/ `build/lib/libY8960EngineApi.so`（Linux）
+
+Linux上でCMakeを使わず直接ビルドする場合:
 
 ```bash
 g++ -std=c++17 -O2 -fPIC -fvisibility=hidden -DFMENGINE_EXPORTS \
@@ -97,35 +77,40 @@ g++ -std=c++17 -O2 -fPIC -fvisibility=hidden -DFMENGINE_EXPORTS \
   src/FmEngineApi.cpp src/dual_ssg.cpp src/opl2ex.cpp src/opllex.cpp \
   extern/ymfm/src/ymfm_opl.cpp extern/ymfm/src/ymfm_ssg.cpp \
   extern/ymfm/src/ymfm_adpcm.cpp extern/ymfm/src/ymfm_pcm.cpp
-
-g++ -std=c++17 -O2 -I src smoke_test.cpp -L. -lY8960EngineApi -o smoke_test
-LD_LIBRARY_PATH=. ./smoke_test
 ```
 
-## 未対応・既知の課題（アーキテクチャ設計書 5節も参照）
+## テスト
 
-1. **DCSG / SCC**: 本プロジェクトのスコープ外。DCSG・SCCはY8960でも機能拡張が
-   無いため、[DSAemuEngine](https://github.com/madscient/DSAemuEngine)
-   （FmEngineApi準拠、チップ名 `DCSG` / `SCC` を提供）をアプリ側で
-   併用する前提とする（詳細はアーキテクチャ設計書 0.1節）。
-2. **OPLLプリセット音色データ（リズム分のみ）**: メロディ15音色は実データ転記済み。
-   リズム3音色分(BD/SD/TOM/CYM/HH相当)のみプレースホルダ(全ゼロ)。
-3. **SSG/OPL2/OPLLの出力ミキシング**: 実機のI2S/ミキサー仕様が未確定のため、
-   `FmChip.h` 側は暫定的に全チャンネル等分加算のモノラルミックスにしている。
-4. **read()系の実機仕様との突合**: 特にSSGのRead系ポート（`7FEAh`系の読み出し仕様）は
-   プログラマーズマニュアルのI/Oマップ止まりで詳細未記載。実機資料が増え次第見直すこと。
-5. **FmEngineApi層からの`set_bank_instrument_data()`呼び出し経路が未整備**:
+```bash
+g++ -std=c++17 -O2 -I src smoke_test.cpp -L. -lY8960EngineApi -o smoke_test
+LD_LIBRARY_PATH=. ./smoke_test
+
+g++ -std=c++17 -O2 -I src -I extern/ymfm/src opllex_bank_test.cpp src/opllex.cpp -o opllex_bank_test
+./opllex_bank_test
+```
+
+`smoke_test.cpp` はDLLの3チップすべてのAddChip/Write/Generateが正常動作すること
+（NaN/Infを出さないこと）を確認する。`opllex_bank_test.cpp` は拡張OPLL部の
+チャンネル独立バンク切替が正しく機能することをホワイトボックスで検証する。
+
+## 未対応・既知の課題
+
+1. **拡張SSG部のRead系仕様**: プログラマーズマニュアルのI/Oマップに
+   Read系ポート（`7FEAh`系）の詳細な仕様記載が無い。実機資料が増え次第見直すこと。
+2. **拡張OPLLのリズム音色データ**: 4バンク共通のymfm転記データを暫定的に使用。
+   実機のリズム音色ROMがバンクごとに異なるかどうかは未確認。
+3. **`FmEngineApi`層からの`set_bank_instrument_data()`呼び出し経路が未整備**:
    現状は `y8960opllex` を直接使うC++コードからしか設定できない。
    `FmEngine_SetMemory` の `FmMemoryType` 拡張などでDLL越しに設定できるようにするか、
    要検討。
 
 ## ライセンス
 
-本プロジェクト自体は `LICENSE` (MIT) に従う。
+本プロジェクト自体は `LICENSE`（MIT）に従う。
 
 ただし `src/opllex.cpp` に内蔵しているOPLLプリセット音色データ
 (`s_opll_melody` / `s_opllx_melody` / `s_opllp_melody` / `s_vrc7_melody`) のみ、
-出典が異なるライセンス (CC BY-SA, Attribution-ShareAlike) のため、
+出典が異なるライセンス（CC BY-SA, Attribution-ShareAlike）のため、
 このデータを含む形で再配布する場合は出典を明記すること:
 
 > "Copyright free OPLL(x) ROM patches"

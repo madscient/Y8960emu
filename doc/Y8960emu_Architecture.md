@@ -1,6 +1,6 @@
 # Y8960emu アーキテクチャ設計書
 
-版: 1.1
+版: 1.2
 対象リポジトリ: `Y8960emu`
 
 本書は実装済みの最終アーキテクチャを説明する。開発経緯（バグ修正・設計変更の経緯）は
@@ -43,8 +43,8 @@ DSAemuEngineのDLLの両方をロードし、`FmEngine_AddChip(handle, "SSG", ..
 
 | Y8960機能ブロック | チップ名文字列 | 実装クラス |
 |---|---|---|
-| 拡張OPL2部 | `Y8960_OPL2`  | `ymfm::y8960opl2ex`（`ym3812`の合成 + `adpcm_b_engine`） |
-| 拡張OPLL部 | `Y8960_OPLLX` | `ymfm::y8960opllex`（`opllex_registers`という独自フォーク） |
+| 拡張OPL2部 | `OPL2EX` | `ymfm::y8960opl2ex`（`ym3812`の合成 + `adpcm_b_engine`） |
+| 拡張OPLL部 | `OPLLEX` | `ymfm::y8960opllex`（`opllex_registers`という独自フォーク） |
 
 ## 2. レイヤー構成
 
@@ -66,7 +66,7 @@ YMEngineの3層構造に、Y8960固有の拡張チップ層を加えた4層構�
 ```
 
 Layer 2〜4はYMEngineの `FmChip.h` / `FmEngine.h` / `FmEngineApi.cpp` をベースに、
-`ChipType` enum と `FmChipImpl` 特殊化に `Y8960_OPL2` / `Y8960_OPLLX`
+`ChipType` enum と `FmChipImpl` 特殊化に `OPL2EX` / `OPLLEX`
 を追加したもの（`FmEngine.h`・`FmEngineApi.*` は無変更で流用）。
 
 ## 3. Layer 1: 派生クラス設計
@@ -83,7 +83,7 @@ Layer 2〜4はYMEngineの `FmChip.h` / `FmEngine.h` / `FmEngineApi.cpp` をベ�
   （`ymfm_opl.cpp`）と同一の配置で、`OPL2+ADPCM` シートの記載内容とも整合する
   （`0x13`以降のうち未使用領域は「廃止」表記のため対応不要）。
 - I/Oポート: `7FECh/7FEDh`(OPL2-2), `7FEEh/7FEFh`(OPL2-1) の2系統×Addr/Data。
-  実機は2回路搭載のため、`FmEngine_AddChip(handle, "Y8960_OPL2", ...)` を
+  実機は2回路搭載のため、`FmEngine_AddChip(handle, "OPL2EX", ...)` を
   2回呼んで2インスタンスを作り、アプリ側はどちらのポートに書かれたかで
   `chip_id`を振り分ける（`SetGain`によるパン設定もこの単位で行える）。
 - ADPCM-Bメモリは `FmEngine_SetMemory(FM_MEM_ADPCM_B, ...)` 経由で外部から
@@ -124,7 +124,7 @@ OPL2部と同様、実機は2回路搭載のため `AddChip` を2回呼ぶ。
 
 YMEngineの実装をベースラインとして、以下の差分のみを加えている。
 
-- `FmChip.h` の `ChipType` enumに `Y8960_OPL2`, `Y8960_OPLLX` を追加。
+- `FmChip.h` の `ChipType` enumに `OPL2EX`, `OPLLEX` を追加。
 - **出力ミキシング方針**: 実機はチップ外側に独立したデジタルミキサーを持ち、
   機能ブロックごとにパンポットを指定する設計であるため、各`FmChip`インスタンスは
   内部でモノラル(L=R)を生成するだけにとどめ、実際のパン/ゲインは呼び出し側が
@@ -133,7 +133,7 @@ YMEngineの実装をベースラインとして、以下の差分のみを加え
   （-1/-2）持つため、`AddChip`を2回呼んで得た2つの`chip_id`にそれぞれ
   `SetGain`すればよい（1インスタンスに複数回路を内包していないため、
   この方式がそのまま機能する）。
-- `FmEngine_SetMemory` はY8960_OPL2(ADPCM-B)のみ対応。
+- `FmEngine_SetMemory` はOPL2EX(ADPCM-B)のみ対応。
   OPLLexの拡張音色ROMは現状コンパイル時埋め込みのみで、
   `FmEngineApi`層からの動的差し替え経路は未整備（README「未対応・既知の課題」参照）。
 

@@ -1,5 +1,5 @@
 ; FmEngineApi.def
-LIBRARY "YMFMEngine"
+LIBRARY "Y8960emuEngine"
 
 EXPORTS
     FmEngine_Create

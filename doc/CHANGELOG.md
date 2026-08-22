@@ -84,15 +84,27 @@ WIPからの主な変更点の記録（開発経緯）。最終的な仕様は `
 - SSG も同様の理由に加え、実機のI/Oポート構造上の非対称性（本ページ冒頭参照）から、
   後日スコープ外に変更（DSAemuEngineの`SSG`を利用する方針に統一）。
 
+## 命名の変更: チップ名シンボルとDLL名
+
+- チップ名シンボルから`Y8960_`接頭辞を外し、`Y8960_OPL2` → `OPL2EX`、
+  `Y8960_OPLLX` → `OPLLEX` に変更（`ChipType` enum・`FmEngine_AddChip()`に
+  渡すチップ名文字列・`FmClock`定数・`FmChip::name()`の戻り値）。
+  DLL名にすでにY8960が含まれており、チップ名側で重ねる必要がないため。
+  ymfm派生クラス名 (`ymfm::y8960opl2ex` / `ymfm::y8960opllex`) は変更していない。
+- CMakeターゲット名を `Y8960EngineApi` → `Y8960emuEngine` に変更。
+  あわせて `FmEngineApi.def` の`LIBRARY`名と `FmEngineApi.rc` の
+  `ProductName`/`InternalName`/`OriginalFilename` に残っていたYMEngine由来の
+  `YMFMEngine` を修正した。
+
 ## 動作確認
 
 `smoke_test.cpp`:
 ```
 supported chips: 2
-  - Y8960_OPL2
-  - Y8960_OPLLX
-[OK] AddChip(Y8960_OPL2) -> id=0 nativeRate=49715
-[OK] AddChip(Y8960_OPLLX) -> id=1 nativeRate=49715
+  - OPL2EX
+  - OPLLEX
+[OK] AddChip(OPL2EX) -> id=0 nativeRate=49715
+[OK] AddChip(OPLLEX) -> id=1 nativeRate=49715
 [OK] AddChip(NOSUCHCHIP) -> -2 (expect FM_ERR_UNKNOWN_CHIP)
 [OK] Generate -> 0
 [OK] NaN check

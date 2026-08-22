@@ -11,9 +11,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(YMFM_DIR "${CMAKE_SOURCE_DIR}/extern/ymfm/src" CACHE PATH "ymfm src dir")
 
 # =======================================================
-#  ターゲット: Y8960EngineApi.dll / libY8960EngineApi.so
+#  ターゲット: Y8960emuEngine.dll / libY8960emuEngine.so
 # =======================================================
-add_library(Y8960EngineApi SHARED
+add_library(Y8960emuEngine SHARED
     src/FmEngineApi.cpp
     src/opl2ex.cpp
     src/opllex.cpp
@@ -23,40 +23,40 @@ add_library(Y8960EngineApi SHARED
                                # 本DLLではOPL4は使わないが、リンクを満たすために必要。
 )
 
-target_include_directories(Y8960EngineApi PRIVATE
+target_include_directories(Y8960emuEngine PRIVATE
     src/
     ${YMFM_DIR}
 )
 
-target_compile_definitions(Y8960EngineApi PRIVATE FMENGINE_EXPORTS)
+target_compile_definitions(Y8960emuEngine PRIVATE FMENGINE_EXPORTS)
 
 if (MSVC)
-    set_target_properties(Y8960EngineApi PROPERTIES
+    set_target_properties(Y8960emuEngine PROPERTIES
         LINK_FLAGS               "/DEF:\"${CMAKE_SOURCE_DIR}/src/FmEngineApi.def\""
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
         PDB_OUTPUT_DIRECTORY     "${CMAKE_BINARY_DIR}/bin"
         DEBUG_POSTFIX            ""
     )
-    target_compile_options(Y8960EngineApi PRIVATE
+    target_compile_options(Y8960emuEngine PRIVATE
         /Oi /GL /W4 /utf-8
         /wd4100   # unreferenced formal parameter (ymfm 内)
         /wd4244   # narrowing conversion (ymfm 内)
         /wd4251   # dll-interface warning
     )
-    target_link_options(Y8960EngineApi PRIVATE /LTCG)
-    target_sources(Y8960EngineApi PRIVATE src/FmEngineApi.rc)
+    target_link_options(Y8960emuEngine PRIVATE /LTCG)
+    target_sources(Y8960emuEngine PRIVATE src/FmEngineApi.rc)
 endif()
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(Y8960EngineApi PRIVATE -O2 -Wall -Wextra -Wno-unused-parameter -fvisibility=hidden)
+    target_compile_options(Y8960emuEngine PRIVATE -O2 -Wall -Wextra -Wno-unused-parameter -fvisibility=hidden)
 endif()
 
 # =======================================================
 #  インストール規則
 #  cmake --install build --prefix <dir>
 # =======================================================
-install(TARGETS Y8960EngineApi
+install(TARGETS Y8960emuEngine
     RUNTIME DESTINATION bin    # .dll
     LIBRARY DESTINATION lib    # .so
     ARCHIVE DESTINATION lib    # .lib (import library)

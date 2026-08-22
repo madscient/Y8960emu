@@ -4,7 +4,7 @@
 // このヘッダだけを include すれば DLL を利用できる。
 // ymfm / FmChip.h 等の内部ヘッダへの依存はない。
 //
-// チップはキーワード文字列で指定する ("OPNA", "OPL2" 等)。
+// チップはキーワード文字列で指定する ("OPL2EX", "OPLLEX" 等)。
 // 対応チップの一覧は FmEngine_Inquiry / FmEngine_GetSupportedChip で取得できる。
 // 新しいチップが追加されてもこのヘッダを変更する必要はない。
 
@@ -60,7 +60,7 @@ FMENGINE_API void           FMENGINE_CALL FmEngine_Destroy(FmEngineHandle engine
 
 // =========================================================
 //  対応チップ問い合わせ
-//  チップはキーワード文字列で識別される ("OPNA", "OPL2", "OPM" 等)。
+//  チップはキーワード文字列で識別される ("OPL2EX", "OPLLEX" 等)。
 //  FmEngine_Inquiry       : 対応チップの総数を返す。
 //  FmEngine_GetSupportedChip: index 番目のチップ名を返す (範囲外は nullptr)。
 // =========================================================
@@ -70,7 +70,7 @@ FMENGINE_API const char* FMENGINE_CALL FmEngine_GetSupportedChip(
 
 // =========================================================
 //  チップ追加
-//  name  : チップ名文字列 ("OPNA", "OPL2" 等、大文字小文字を区別する)
+//  name  : チップ名文字列 ("OPL2EX", "OPLLEX" 等、大文字小文字を区別する)
 //  clock : マスタークロック Hz。0 で各チップの標準クロックを使用。
 //  未知の名前なら FM_ERR_UNKNOWN_CHIP を返す。
 // =========================================================

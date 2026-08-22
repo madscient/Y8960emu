@@ -30,8 +30,8 @@ int main() {
     for (uint32_t i = 0; i < FmEngine_Inquiry(eng); ++i)
         std::printf("  - %s\n", FmEngine_GetSupportedChip(eng, i));
 
-    checkChip(eng, "Y8960_OPL2");
-    checkChip(eng, "Y8960_OPLLX");
+    checkChip(eng, "OPL2EX");
+    checkChip(eng, "OPLLEX");
 
     // 未知チップ名のエラーハンドリング確認
     uint32_t dummy = 0;

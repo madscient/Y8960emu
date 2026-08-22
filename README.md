@@ -6,7 +6,7 @@ Y8960 Cartridge に搭載予定の統合音源チップ）のソフトウェア�
 [ymfm](https://github.com/aaronsgiles/ymfm) をコアとして、Y8960固有の拡張ブロック
 （拡張OPL2部・拡張OPLL部）を個別クラスとして実装し、
 [FmEngineApi](https://github.com/madscient/FMEngineTest) 互換のDLL
-(`Y8960EngineApi`) にまとめたもの。
+(`Y8960emuEngine`) にまとめたもの。
 
 設計の詳細は [`doc/Y8960emu_Architecture.md`](doc/Y8960emu_Architecture.md)、
 開発経緯は [`doc/CHANGELOG.md`](doc/CHANGELOG.md) を参照。
@@ -17,8 +17,8 @@ Y8960 Cartridge に搭載予定の統合音源チップ）のソフトウェア�
 
 | チップ名 | Y8960の機能ブロック | 実装クラス | 備考 |
 |---|---|---|---|
-| `Y8960_OPL2`  | 拡張OPL2部 | `ymfm::y8960opl2ex` | YM3812相当 + ADPCM-B、1回路分。実機は2回路搭載のため`AddChip`を2回呼ぶ |
-| `Y8960_OPLLX` | 拡張OPLL部 | `ymfm::y8960opllex` | YM2413相当 + チャンネル独立プリセット音色バンク切替、1回路分。同様に2回路分は`AddChip`を2回 |
+| `OPL2EX` | 拡張OPL2部 | `ymfm::y8960opl2ex` | YM3812相当 + ADPCM-B、1回路分。実機は2回路搭載のため`AddChip`を2回呼ぶ |
+| `OPLLEX` | 拡張OPLL部 | `ymfm::y8960opllex` | YM2413相当 + チャンネル独立プリセット音色バンク切替、1回路分。同様に2回路分は`AddChip`を2回 |
 
 SSG・DCSG・SCCは本プロジェクトのスコープ外。[スコープについて](#スコープ-ssg--dcsg--scc-は対象外)を参照。
 
@@ -44,7 +44,7 @@ ch0-ch8に対応)でチャンネルごとに音色プリセットを選べる。
 
 ## 出力とミキシング
 
-各`FmChip`インスタンス（Y8960_OPL2/Y8960_OPLLXそれぞれ）は内部でモノラル(L=R)を
+各`FmChip`インスタンス（OPL2EX/OPLLEXそれぞれ）は内部でモノラル(L=R)を
 生成する。実機はチップ外側に独立したデジタルミキサーを持ち、機能ブロックごとに
 パンポットを指定する設計のため、左右のパン・音量は呼び出し側が
 `FmEngine_SetGain(handle, chip_id, gain_l, gain_r)` で指定する。
@@ -78,13 +78,13 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-成果物: `build/bin/Y8960EngineApi.dll`（Windows）/ `build/lib/libY8960EngineApi.so`（Linux）
+成果物: `build/bin/Y8960emuEngine.dll`（Windows）/ `build/lib/libY8960emuEngine.so`（Linux）
 
 Linux上でCMakeを使わず直接ビルドする場合:
 
 ```bash
 g++ -std=c++17 -O2 -fPIC -fvisibility=hidden -DFMENGINE_EXPORTS \
-  -I src -I extern/ymfm/src -shared -o libY8960EngineApi.so \
+  -I src -I extern/ymfm/src -shared -o libY8960emuEngine.so \
   src/FmEngineApi.cpp src/opl2ex.cpp src/opllex.cpp \
   extern/ymfm/src/ymfm_opl.cpp \
   extern/ymfm/src/ymfm_adpcm.cpp extern/ymfm/src/ymfm_pcm.cpp
@@ -93,7 +93,7 @@ g++ -std=c++17 -O2 -fPIC -fvisibility=hidden -DFMENGINE_EXPORTS \
 ## テスト
 
 ```bash
-g++ -std=c++17 -O2 -I src _test/smoke_test.cpp -L. -lY8960EngineApi -o smoke_test
+g++ -std=c++17 -O2 -I src _test/smoke_test.cpp -L. -lY8960emuEngine -o smoke_test
 LD_LIBRARY_PATH=. ./smoke_test
 
 g++ -std=c++17 -O2 -I src -I extern/ymfm/src _test/opllex_bank_test.cpp src/opllex.cpp -o opllex_bank_test

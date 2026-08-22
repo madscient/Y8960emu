@@ -27,8 +27,8 @@
 //  チップ種別列挙
 // =========================================================
 enum class ChipType {
-    Y8960_OPL2,   // 拡張OPL2部 (YM3812相当 + ADPCM-B、1回路分)
-    Y8960_OPLLX,  // 拡張OPLL部 (YM2413相当 + プリセット音色バンク切替、1回路分)
+    OPL2EX,   // 拡張OPL2部 (YM3812相当 + ADPCM-B、1回路分)
+    OPLLEX,   // 拡張OPLL部 (YM2413相当 + プリセット音色バンク切替、1回路分)
 };
 
 // =========================================================
@@ -36,8 +36,8 @@ enum class ChipType {
 //  Y8960 CartridgeはMSX用カートリッジのため、MSX標準クロックを既定値とする。
 // =========================================================
 namespace FmClock {
-    constexpr uint32_t Y8960_OPL2  = 3'579'545;
-    constexpr uint32_t Y8960_OPLLX = 3'579'545;
+    constexpr uint32_t OPL2EX = 3'579'545;
+    constexpr uint32_t OPLLEX = 3'579'545;
 }
 
 // =========================================================
@@ -245,14 +245,14 @@ private:
         // モノラル(L=R)を返すだけにとどめ、実際のパン/ゲインは呼び出し側が
         // FmEngine_SetGain(chip_id, gain_l, gain_r) で指定する前提とする。
         //
-        //   Y8960_OPL2  : OUTPUTS=2 (melody, rhythm)。ADPCM-Bは
+        //   OPL2EX : OUTPUTS=2 (melody, rhythm)。ADPCM-Bは
         //                 y8960opl2ex::generate() 内で既に加算済み。
         //                 data[0]+data[1] をモノラル化 (Y8950と同型のMixMono)。
         //
-        //   Y8960_OPLLX : OUTPUTS=2 (melody, rhythm)。OPLLと同型のMixMono。
+        //   OPLLEX : OUTPUTS=2 (melody, rhythm)。OPLLと同型のMixMono。
         constexpr bool isMixMono =
             kOutputs >= 2 &&
-            (TType == ChipType::Y8960_OPL2 || TType == ChipType::Y8960_OPLLX);
+            (TType == ChipType::OPL2EX || TType == ChipType::OPLLEX);
 
         for (uint32_t i = 0; i < n; ++i) {
             m_chip.generate(&out_data);
@@ -277,21 +277,21 @@ private:
 // =========================================================
 //  name() 特殊化
 // =========================================================
-template<> inline const char* FmChipImpl<ymfm::y8960opl2ex, ChipType::Y8960_OPL2 >::name() const { return "Y8960 Extended OPL2";  }
-template<> inline const char* FmChipImpl<ymfm::y8960opllex, ChipType::Y8960_OPLLX>::name() const { return "Y8960 Extended OPLL"; }
+template<> inline const char* FmChipImpl<ymfm::y8960opl2ex, ChipType::OPL2EX>::name() const { return "OPL2EX"; }
+template<> inline const char* FmChipImpl<ymfm::y8960opllex, ChipType::OPLLEX>::name() const { return "OPLLEX"; }
 
 // =========================================================
 //  コンストラクタ特殊化
 //  Y8960拡張チップ2種はいずれも (ymfm_interface&) のみを取る
 // =========================================================
 template<>
-inline FmChipImpl<ymfm::y8960opl2ex, ChipType::Y8960_OPL2>::FmChipImpl(uint32_t clock)
-    : m_chip(m_iface), m_clock(clock ? clock : FmClock::Y8960_OPL2)
+inline FmChipImpl<ymfm::y8960opl2ex, ChipType::OPL2EX>::FmChipImpl(uint32_t clock)
+    : m_chip(m_iface), m_clock(clock ? clock : FmClock::OPL2EX)
 { m_chip.reset(); m_native_rate = m_chip.sample_rate(m_clock); }
 
 template<>
-inline FmChipImpl<ymfm::y8960opllex, ChipType::Y8960_OPLLX>::FmChipImpl(uint32_t clock)
-    : m_chip(m_iface), m_clock(clock ? clock : FmClock::Y8960_OPLLX)
+inline FmChipImpl<ymfm::y8960opllex, ChipType::OPLLEX>::FmChipImpl(uint32_t clock)
+    : m_chip(m_iface), m_clock(clock ? clock : FmClock::OPLLEX)
 { m_chip.reset(); m_native_rate = m_chip.sample_rate(m_clock); }
 
 // =========================================================
@@ -300,10 +300,10 @@ inline FmChipImpl<ymfm::y8960opllex, ChipType::Y8960_OPLLX>::FmChipImpl(uint32_t
 inline std::unique_ptr<FmChip> createChip(ChipType type, uint32_t clock = 0) {
     auto resolve = [](uint32_t c, uint32_t def) { return c ? c : def; };
     switch (type) {
-        case ChipType::Y8960_OPL2:
-            return std::make_unique<FmChipImpl<ymfm::y8960opl2ex, ChipType::Y8960_OPL2>>(resolve(clock, FmClock::Y8960_OPL2));
-        case ChipType::Y8960_OPLLX:
-            return std::make_unique<FmChipImpl<ymfm::y8960opllex, ChipType::Y8960_OPLLX>>(resolve(clock, FmClock::Y8960_OPLLX));
+        case ChipType::OPL2EX:
+            return std::make_unique<FmChipImpl<ymfm::y8960opl2ex, ChipType::OPL2EX>>(resolve(clock, FmClock::OPL2EX));
+        case ChipType::OPLLEX:
+            return std::make_unique<FmChipImpl<ymfm::y8960opllex, ChipType::OPLLEX>>(resolve(clock, FmClock::OPLLEX));
     }
     return nullptr;
 }
@@ -319,9 +319,9 @@ struct ChipEntry {
 
 inline const ChipEntry* chipTable() {
     static const ChipEntry kTable[] = {
-        { "Y8960_OPL2",  ChipType::Y8960_OPL2,  FmClock::Y8960_OPL2  },
-        { "Y8960_OPLLX", ChipType::Y8960_OPLLX, FmClock::Y8960_OPLLX },
-        { nullptr,       ChipType::Y8960_OPL2,  0                    },  // sentinel
+        { "OPL2EX", ChipType::OPL2EX, FmClock::OPL2EX },
+        { "OPLLEX", ChipType::OPLLEX, FmClock::OPLLEX },
+        { nullptr,  ChipType::OPL2EX, 0               },  // sentinel
     };
     return kTable;
 }

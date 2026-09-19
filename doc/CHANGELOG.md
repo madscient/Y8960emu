@@ -148,6 +148,24 @@ N × 約2ms 遅れる（設計から導いた値・遅れ量は測っていな�
 「KEY OFF/ON の状態は最低約2ms観測させる」を前提にしている。発音タイミングを
 優先するなら、衝突時に生成する長さを縮めることになる。
 
+## ymfm を 17decfa → 81aec25 に更新
+
+上流の4コミットのうち、本DLLに効くのは 2252890（OPL2 の WSE ビットを実機どおり
+扱う）だけ。81aec25（OPN）・6cc0c4a（OPZ）・e9f57df（サンプルのビルド）は、
+本DLLがビルドしないファイルへの変更。
+
+- OPL2EX: 波形選択（reg 0xE0-0xF5）が、reg 0x01 bit5（WSE）=1 のときだけ効く
+  ようになった。以前は WSE と無関係に効いていた（`ymfm_opl.cpp` の
+  `cache_operator_data()` が WSE を見ていなかった）。拡張OPL2部は YM3812 相当
+  なので、実機に近づく変更として取り込んだ。この判断は「Y8960 の拡張OPL2部が
+  YM3812 と同じく WSE を持つ」限り成立する。WSE を立てずに波形選択していた
+  曲は、サインで鳴るようになる。`opl2ex_wse_test.cpp` を追加（17decfa では
+  WSE=0 の項が FAIL）。
+- OPLLEX: 影響なし。フォーク元の `opll_registers` と、フォークが借りている
+  `ymfm_opl.h` の共通関数は変わっていない（上流の `ymfm_opl.h` の差分は
+  `opl_registers_base` のコメント1行と `op_waveform()` のみ）。
+  `opllex_bank_test.cpp` は更新前後とも全項 OK。
+
 ## 動作確認
 
 `smoke_test.cpp`:
@@ -189,3 +207,9 @@ supported chips: 2
 batch は `9c687c8` より前のヘッダで FAIL、crowd は `9c687c8` で3件とも FAIL
 （リズムは `after OFF/ON=0.0000`）、tiny は `9c687c8` で OPL2EX のみ FAIL
 （OPLLEX は `9c687c8` でも通る）。
+
+`opl2ex_wse_test.cpp`:
+```
+[OK] WSE=0: waveform select ignored (min=-0.1245, expect < -0.05)
+[OK] WSE=1: half-sine selected    (min=0.0004, expect > -0.01)
+```

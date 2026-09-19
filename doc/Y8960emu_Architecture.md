@@ -163,7 +163,8 @@ Y8960emu/
 ├── _test/
 │   ├── smoke_test.cpp             DLL経由の動作確認テスト
 │   ├── opllex_bank_test.cpp       拡張OPLLのチャンネル独立バンク回帰テスト
-│   └── keyoff_retrigger_test.cpp  短間隔 KEY OFF → KEY ON の回帰テスト
+│   ├── keyoff_retrigger_test.cpp  短間隔 KEY OFF → KEY ON の回帰テスト
+│   └── opl2ex_wse_test.cpp        拡張OPL2の波形選択が WSE に従うことの回帰テスト
 ├── doc/
 │   ├── CHANGELOG.md
 │   └── Y8960emu_Architecture.md   (本書)

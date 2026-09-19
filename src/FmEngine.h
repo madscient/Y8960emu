@@ -174,39 +174,59 @@ public:
         //    あった場合に KEY OFF が一度も観測されず (リリースも再アタックも
         //    起きず) 無視される。逆順ならノートオンが無音のまま消える。
         //
-        //    そこでチャンネルスロットごとに「前回の生成以降に未観測の変化が
+        //    そこでチャンネルスロットごとに「最後の生成以降に未観測の変化が
         //    あるか」を m_keyDirtyMask で追跡し、同じスロットが再び変化しよう
-        //    としたときだけ、書き込み前に minKeyOnTickSamples() 分を先に生成
-        //    して前の状態を確定させる。別チャンネルどうし (和音、同時に鳴る
-        //    打楽器) は衝突しないので分割しない。
-        //    先行生成を1サンプルにしないのは、直後の別の衝突ですぐ次の状態に
-        //    切り替わり、アタックが立ち上がる前に事実上無音になり得るため。
-        std::fill(m_keyDirtyMask.begin(), m_keyDirtyMask.end(), uint64_t{0});
-
+        //    としたら、その書き込みを m_pending に保留して前の状態のまま
+        //    minKeyOnTickSamples() 分を生成してから適用する。別チャンネル
+        //    どうし (和音、同時に鳴る打楽器) は衝突しないので分割しない。
+        //    保留中は後続の書き込みも順序を保つため適用しない。
+        //
+        //    保留の生成は呼び出しをまたいで数える。今回の samples に収まらない
+        //    分は次の呼び出しの頭で続きを生成してから適用する。そのため衝突が
+        //    多い、または呼び出しが細かいと、書き込みの適用が遅れて累積する
+        //    (衝突1回あたり最大 minKeyOnTickSamples())。未観測の状態を捨てずに
+        //    観測させることを、発音タイミングの正確さより優先している。
+        //    前の状態を1サンプルしか生成しないと、KEY OFF のリリースが聞こえる
+        //    前に KEY ON で戻り、アタックも立ち上がる前に次の状態に切り替わり
+        //    得るため、最低限の時間を確保する。
         const uint32_t minTick = minKeyOnTickSamples();
         uint32_t produced = 0;
-        RegWriteCmd cmd;
-        while (m_queue.pop(cmd)) {
-            FmChip& chip = *m_chips[cmd.chip_id];
-            const uint64_t mask = chip.keyOnTransitionMask(cmd.port, cmd.reg, cmd.value);
-            if (mask != 0) {
-                const bool conflict = (m_keyDirtyMask[cmd.chip_id] & mask) != 0;
-                if (conflict && produced < samples) {
-                    const uint32_t tick = (samples - produced < minTick) ? (samples - produced) : minTick;
-                    mixSpan(out_l + produced, out_r + produced, tick);
-                    produced += tick;
-                    std::fill(m_keyDirtyMask.begin(), m_keyDirtyMask.end(), uint64_t{0});
+        for (;;) {
+            if (m_hasPending) {
+                if (m_pendingHold > 0) {
+                    const uint32_t room = samples - produced;
+                    const uint32_t n = (room < m_pendingHold) ? room : m_pendingHold;
+                    if (n == 0) break;
+                    renderSpan(out_l + produced, out_r + produced, n);
+                    produced += n;
+                    m_pendingHold -= n;
+                    if (m_pendingHold > 0) break;
                 }
-                chip.write(cmd.port, cmd.reg, cmd.value);
-                m_keyDirtyMask[cmd.chip_id] |= mask;
-            } else {
-                chip.write(cmd.port, cmd.reg, cmd.value);
+                m_chips[m_pending.chip_id]->write(m_pending.port, m_pending.reg, m_pending.value);
+                m_keyDirtyMask[m_pending.chip_id] |= m_pendingMask;
+                m_hasPending = false;
             }
+
+            RegWriteCmd cmd;
+            if (!m_queue.pop(cmd)) break;
+            FmChip& chip = *m_chips[cmd.chip_id];
+            // 直前値キャッシュを書き込み順に更新するため、保留する場合も
+            // ここで1回だけ呼ぶ。
+            const uint64_t mask = chip.keyOnTransitionMask(cmd.port, cmd.reg, cmd.value);
+            if ((m_keyDirtyMask[cmd.chip_id] & mask) != 0) {
+                m_pending     = cmd;
+                m_pendingMask = mask;
+                m_pendingHold = minTick;
+                m_hasPending  = true;
+                continue;
+            }
+            chip.write(cmd.port, cmd.reg, cmd.value);
+            m_keyDirtyMask[cmd.chip_id] |= mask;
         }
 
         // 2. 残りをまとめて生成
         if (produced < samples) {
-            mixSpan(out_l + produced, out_r + produced, samples - produced);
+            renderSpan(out_l + produced, out_r + produced, samples - produced);
         }
 
         // 3. ソフトクリップ
@@ -243,6 +263,16 @@ private:
         return (rate / 500 > 0) ? (rate / 500) : 1;
     }
 
+    // 1サンプルでも生成すれば、それまでに適用したキー状態は全チップで観測
+    // 済みになる。未観測の追跡は呼び出しの境目ではなくここで打ち切る
+    // (呼び出しの末尾で samples を使い切った後に適用した書き込みは、次の
+    // 呼び出しの頭でもまだ未観測のため)。
+    void renderSpan(float* out_l, float* out_r, uint32_t count) {
+        mixSpan(out_l, out_r, count);
+        if (count > 0)
+            std::fill(m_keyDirtyMask.begin(), m_keyDirtyMask.end(), uint64_t{0});
+    }
+
     // [out, out+count) をクリアし、全チップを生成してゲイン付きでミックスする。
     // ソフトクリップは呼び出し元でバッファ全体に1回だけかける。
     void mixSpan(float* out_l, float* out_r, uint32_t count) {
@@ -277,5 +307,10 @@ private:
     std::vector<std::unique_ptr<ChipGain>>   m_gains;   // unique_ptr: atomic は vector 再確保でムーブ不可
     std::vector<WorkBuf>                     m_work_bufs;
     SpscQueue<RegWriteCmd, 4096>             m_queue;
-    std::vector<uint64_t>                    m_keyDirtyMask; // generate() 内でのみ使用
+    // 以下は generate() (オーディオスレッド) からのみ触る
+    std::vector<uint64_t>                    m_keyDirtyMask;
+    RegWriteCmd                              m_pending{};
+    uint64_t                                 m_pendingMask = 0;
+    uint32_t                                 m_pendingHold = 0;
+    bool                                     m_hasPending  = false;
 };

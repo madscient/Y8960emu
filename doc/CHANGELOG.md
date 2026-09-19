@@ -124,6 +124,30 @@ WIPからの主な変更点の記録（開発経緯）。最終的な仕様は `
 YMEngine も同一実装）。本修正で衝突時に分割呼び出しが増えるが、今回の症状とは
 別問題として手を付けていない。
 
+## 修正: KEY OFF → KEY ON の衝突が多い／呼び出しが細かいと KEY OFF が消える
+
+利用側（Y8960Sequencer）からの報告。前項の対策は、先行生成をその呼び出しの
+`samples` の中でしか行わず、使い切った後の衝突は間を空けずに書き込んでいた。
+- 衝突が多い: 240 サンプルずつの呼び出しで5チャンネル以上が同時に
+  KEY OFF → KEY ON すると 96 サンプル × 数回で余地が尽き、後ろの
+  チャンネル（リズム 0x0E など）の KEY OFF が消える。
+- 呼び出しが細かい: generate(1) などでは先行生成が端数しか取れず、KEY OFF が
+  1サンプル程度しか観測されない（リリースが聞こえない）。
+
+対処: 衝突した書き込みを保留し、前の状態のまま `minKeyOnTickSamples()` 分を
+生成し終えてから適用する。保留中の生成は呼び出しをまたいで数え、後続の書き込み
+も保留が解けるまで適用しない。未観測の追跡（`m_keyDirtyMask`）は呼び出しの頭
+ではなく、1サンプル以上生成した時点で打ち切るようにした。
+
+見送り: 利用側の案「余地が尽きたら衝突した書き込み以降を次の呼び出しの頭で
+適用する」は採らなかった。余地が尽きる直前に適用した書き込み（例: KEY OFF）は
+まだ1サンプルも生成されていないので、次の呼び出しの頭で続き（KEY ON）を適用
+すると、やはり観測されないため。
+代償: 衝突1回ごとに適用が最大約2ms遅れ、同じ呼び出しに衝突が N 回あると最大
+N × 約2ms 遅れる（設計から導いた値・遅れ量は測っていない）。この代償は
+「KEY OFF/ON の状態は最低約2ms観測させる」を前提にしている。発音タイミングを
+優先するなら、衝突時に生成する長さを縮めることになる。
+
 ## 動作確認
 
 `smoke_test.cpp`:
@@ -150,8 +174,18 @@ supported chips: 2
 [OK] default presets differ across all 4 banks
 ```
 
-`keyoff_retrigger_test.cpp`（修正前のヘッダでは両チップとも `after OFF/ON=0.0000` で FAIL）:
+`keyoff_retrigger_test.cpp`:
 ```
-[OK] OPL2EX: attack=0.1204 held=0.0000 after OFF/ON=0.1216
-[OK] OPLLEX: attack=0.1036 held=0.0000 after OFF/ON=0.1045
+[OK] OPL2EX batch dip : held=0.1238 min1ms=0.0011 tail=0.1238
+[OK] OPL2EX crowd dip : held=0.1238 min1ms=0.0013 tail=0.1238
+[OK] OPL2EX tiny  dip : held=0.1238 min1ms=0.0000 tail=0.1238
+[OK] OPLLEX batch dip : held=0.1100 min1ms=0.0013 tail=0.1101
+[OK] OPLLEX crowd dip : held=0.1100 min1ms=0.0009 tail=0.1101
+[OK] OPLLEX tiny  dip : held=0.1100 min1ms=0.0000 tail=0.1101
+[OK] OPLLEX batch hit : attack=0.2184 held=0.0000 after OFF/ON=0.2168
+[OK] OPLLEX crowd hit : attack=0.2184 held=0.0000 after OFF/ON=0.2151
+[OK] OPLLEX tiny  hit : attack=0.2184 held=0.0000 after OFF/ON=0.2148
 ```
+batch は `9c687c8` より前のヘッダで FAIL、crowd は `9c687c8` で3件とも FAIL
+（リズムは `after OFF/ON=0.0000`）、tiny は `9c687c8` で OPL2EX のみ FAIL
+（OPLLEX は `9c687c8` でも通る）。

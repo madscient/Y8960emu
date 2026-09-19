@@ -166,35 +166,50 @@ public:
 
     // サンプル生成 (オーディオスレッドから呼ぶ)
     void generate(float* out_l, float* out_r, uint32_t samples) {
-        // 1. キュー消化
+        // 1. キュー消化。
+        //    ymfm はキーオン/オフのレジスタ書き込みを即座にエンベロープへ
+        //    反映せず、次のサンプル生成時 (fm_operator::clock_keystate) に
+        //    その時点のキー状態だけを見る。キューを全部適用してから一括生成
+        //    すると、同じチャンネルへの KEY OFF → KEY ON が同一バッファ内に
+        //    あった場合に KEY OFF が一度も観測されず (リリースも再アタックも
+        //    起きず) 無視される。逆順ならノートオンが無音のまま消える。
+        //
+        //    そこでチャンネルスロットごとに「前回の生成以降に未観測の変化が
+        //    あるか」を m_keyDirtyMask で追跡し、同じスロットが再び変化しよう
+        //    としたときだけ、書き込み前に minKeyOnTickSamples() 分を先に生成
+        //    して前の状態を確定させる。別チャンネルどうし (和音、同時に鳴る
+        //    打楽器) は衝突しないので分割しない。
+        //    先行生成を1サンプルにしないのは、直後の別の衝突ですぐ次の状態に
+        //    切り替わり、アタックが立ち上がる前に事実上無音になり得るため。
+        std::fill(m_keyDirtyMask.begin(), m_keyDirtyMask.end(), uint64_t{0});
+
+        const uint32_t minTick = minKeyOnTickSamples();
+        uint32_t produced = 0;
         RegWriteCmd cmd;
         while (m_queue.pop(cmd)) {
-            m_chips[cmd.chip_id]->write(cmd.port, cmd.reg, cmd.value);
-        }
-
-        // 2. バッファクリア
-        std::fill(out_l, out_l + samples, 0.0f);
-        std::fill(out_r, out_r + samples, 0.0f);
-
-        // 3. 各チップ生成 → ゲイン付きミックス
-        assert(m_chips.size() == m_gains.size());
-        assert(m_chips.size() == m_work_bufs.size());
-        for (size_t i = 0; i < m_chips.size(); ++i) {
-            WorkBuf& wb = m_work_bufs[i];
-            wb.l.resize(samples);
-            wb.r.resize(samples);
-
-            m_chips[i]->generate(wb.l.data(), wb.r.data(), samples);
-
-            const float gl = m_gains[i]->gain_l.load(std::memory_order_relaxed);
-            const float gr = m_gains[i]->gain_r.load(std::memory_order_relaxed);
-            for (uint32_t s = 0; s < samples; ++s) {
-                out_l[s] += wb.l[s] * gl;
-                out_r[s] += wb.r[s] * gr;
+            FmChip& chip = *m_chips[cmd.chip_id];
+            const uint64_t mask = chip.keyOnTransitionMask(cmd.port, cmd.reg, cmd.value);
+            if (mask != 0) {
+                const bool conflict = (m_keyDirtyMask[cmd.chip_id] & mask) != 0;
+                if (conflict && produced < samples) {
+                    const uint32_t tick = (samples - produced < minTick) ? (samples - produced) : minTick;
+                    mixSpan(out_l + produced, out_r + produced, tick);
+                    produced += tick;
+                    std::fill(m_keyDirtyMask.begin(), m_keyDirtyMask.end(), uint64_t{0});
+                }
+                chip.write(cmd.port, cmd.reg, cmd.value);
+                m_keyDirtyMask[cmd.chip_id] |= mask;
+            } else {
+                chip.write(cmd.port, cmd.reg, cmd.value);
             }
         }
 
-        // 4. ソフトクリップ
+        // 2. 残りをまとめて生成
+        if (produced < samples) {
+            mixSpan(out_l + produced, out_r + produced, samples - produced);
+        }
+
+        // 3. ソフトクリップ
         for (uint32_t s = 0; s < samples; ++s) {
             out_l[s] = softClip(out_l[s]);
             out_r[s] = softClip(out_r[s]);
@@ -212,6 +227,7 @@ private:
         m_chips.push_back(std::move(chip));
         m_gains.push_back(std::make_unique<ChipGain>());
         m_work_bufs.emplace_back();
+        m_keyDirtyMask.push_back(0);
         return id;
     }
 
@@ -219,6 +235,36 @@ private:
         if (x >  1.5f) return  1.0f;
         if (x < -1.5f) return -1.0f;
         return x * (1.0f - (x * x) / 9.0f);
+    }
+
+    // キーオン衝突時に先行生成するサンプル数 (約2ms)
+    uint32_t minKeyOnTickSamples() const {
+        const uint32_t rate = m_sample_rate ? m_sample_rate : 44100;
+        return (rate / 500 > 0) ? (rate / 500) : 1;
+    }
+
+    // [out, out+count) をクリアし、全チップを生成してゲイン付きでミックスする。
+    // ソフトクリップは呼び出し元でバッファ全体に1回だけかける。
+    void mixSpan(float* out_l, float* out_r, uint32_t count) {
+        std::fill(out_l, out_l + count, 0.0f);
+        std::fill(out_r, out_r + count, 0.0f);
+
+        assert(m_chips.size() == m_gains.size());
+        assert(m_chips.size() == m_work_bufs.size());
+        for (size_t i = 0; i < m_chips.size(); ++i) {
+            WorkBuf& wb = m_work_bufs[i];
+            wb.l.resize(count);
+            wb.r.resize(count);
+
+            m_chips[i]->generate(wb.l.data(), wb.r.data(), count);
+
+            const float gl = m_gains[i]->gain_l.load(std::memory_order_relaxed);
+            const float gr = m_gains[i]->gain_r.load(std::memory_order_relaxed);
+            for (uint32_t s = 0; s < count; ++s) {
+                out_l[s] += wb.l[s] * gl;
+                out_r[s] += wb.r[s] * gr;
+            }
+        }
     }
 
     struct WorkBuf {
@@ -231,4 +277,5 @@ private:
     std::vector<std::unique_ptr<ChipGain>>   m_gains;   // unique_ptr: atomic は vector 再確保でムーブ不可
     std::vector<WorkBuf>                     m_work_bufs;
     SpscQueue<RegWriteCmd, 4096>             m_queue;
+    std::vector<uint64_t>                    m_keyDirtyMask; // generate() 内でのみ使用
 };

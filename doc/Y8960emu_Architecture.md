@@ -67,7 +67,15 @@ YMEngineの3層構造に、Y8960固有の拡張チップ層を加えた4層構�
 
 Layer 2〜4はYMEngineの `FmChip.h` / `FmEngine.h` / `FmEngineApi.cpp` をベースに、
 `ChipType` enum と `FmChipImpl` 特殊化に `OPL2EX` / `OPLLEX`
-を追加したもの（`FmEngine.h`・`FmEngineApi.*` は無変更で流用）。
+を追加したもの（`FmEngineApi.*` は無変更で流用）。
+
+`FmEngine.h` の `generate()` は、キューに溜まった書き込みのうち同じチャンネルの
+キーオン/オフ状態を再び変える書き込みが来たとき、その手前で約2ms分を先に生成して
+から適用する（YMEngine と同じ方式）。ymfm はキー状態をサンプル生成時にしか
+エンベロープへ反映しないため、これが無いと1バッファ内の KEY OFF → KEY ON で
+KEY OFF が無視される。どの書き込みがどのチャンネルのキー状態を変えるかは
+`FmChipImpl::keyOnTransitionMask()` がチップ種別ごとに判定する
+（メロディ ch0-8 とリズム5楽器を別々のチャンネルとして扱う）。
 
 ## 3. Layer 1: 派生クラス設計
 
@@ -151,7 +159,8 @@ Y8960emu/
 │   ├── FmEngineApi.h/.cpp/.def/.rc Layer4: DLL公開Cファサード
 ├── _test/
 │   ├── smoke_test.cpp             DLL経由の動作確認テスト
-│   └── opllex_bank_test.cpp       拡張OPLLのチャンネル独立バンク回帰テスト
+│   ├── opllex_bank_test.cpp       拡張OPLLのチャンネル独立バンク回帰テスト
+│   └── keyoff_retrigger_test.cpp  短間隔 KEY OFF → KEY ON の回帰テスト
 ├── doc/
 │   ├── CHANGELOG.md
 │   └── Y8960emu_Architecture.md   (本書)

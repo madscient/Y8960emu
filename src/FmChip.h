@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <array>
 #include <memory>
 #include <vector>
 #include <cassert>
@@ -117,6 +118,12 @@ public:
     virtual void        setMemory(ymfm::access_class access_type,
                                   const uint8_t* data, uint32_t size) {}
     virtual uint32_t    memorySize(ymfm::access_class access_type) const { return 0; }
+
+    // このレジスタ書き込みでキーオン/オフ状態が変化するチャンネルスロットの
+    // ビットマスク。変化しなければ 0。FmEngine::generate() が同一チャンネルの
+    // 未観測な変化の重なりを検出するのに使う。
+    // 直前値をキャッシュするため、write() と同じ順序で1回ずつ呼ぶこと。
+    virtual uint64_t    keyOnTransitionMask(uint32_t port, uint8_t reg, uint8_t value) { return 0; }
 };
 
 // =========================================================
@@ -225,6 +232,18 @@ public:
         return m_iface.memorySize(access_type);
     }
 
+    uint64_t keyOnTransitionMask(uint32_t port, uint8_t reg, uint8_t value) override {
+        const uint8_t mask = keyBitMask(reg);
+        if (mask == 0) return 0;
+
+        const uint8_t prevMasked = m_lastKeyRegValue[reg] & mask;
+        const uint8_t newMasked  = value & mask;
+        m_lastKeyRegValue[reg] = value;
+        if (prevMasked == newMasked) return 0;
+
+        return keyChannelSlotMask(reg, static_cast<uint8_t>(prevMasked ^ newMasked));
+    }
+
     uint32_t    nativeRate() const override { return m_native_rate; }
     ChipType    type()       const override { return TType; }
     uint32_t    clock()      const override { return m_clock; }
@@ -266,12 +285,55 @@ private:
         }
     }
 
+    // キーオン/オフに関係するビット。
+    //   OPL2EX : reg 0xB0-0xB8 の bit5 / reg 0xBD の bit0-5 (リズム gate+楽器選択)
+    //   OPLLEX : reg 0x20-0x28 の bit4 / reg 0x0E の bit0-5 (リズム gate+楽器選択)
+    // キーオンビットと F-Number/Block が同一レジスタに同居するため、アドレス
+    // だけで判定するとビブラート等の周波数書き換えにまで反応して余計な
+    // 分割生成を招く。ビット単位で絞る。
+    // ADPCM-B の START (reg 0x07) は ymfm 側で書き込み時に即時処理されるため
+    // 対象外。
+    // 両チップとも port によらず同一のレジスタ空間に書き込まれる (write() の
+    // offset は下位1bitしか見られない) ため、port は判定に使わない。
+    static uint8_t keyBitMask(uint8_t reg) {
+        if constexpr (TType == ChipType::OPL2EX) {
+            if (reg == 0xbd) return 0x3F;
+            if (reg >= 0xb0 && reg <= 0xb8) return 0x20;
+            return 0;
+        } else if constexpr (TType == ChipType::OPLLEX) {
+            if (reg == 0x0e) return 0x3F;
+            if (reg >= 0x20 && reg <= 0x28) return 0x10;
+            return 0;
+        } else {
+            return 0;
+        }
+    }
+
+    // リズムレジスタの bit0-4 は独立した5打楽器、bit5 は全打楽器のマスター
+    // ゲート。打楽器ごとに別スロットを割り当て、同時に鳴らすドラムどうしを
+    // 衝突扱いしない。ゲートが変化したときは5スロットすべてを対象にする。
+    static uint64_t rhythmSlotMask(uint8_t changedBits, uint32_t baseSlot) {
+        uint64_t result = 0;
+        for (uint32_t b = 0; b < 5; ++b)
+            if (changedBits & (1u << b)) result |= (uint64_t{1} << (baseSlot + b));
+        if (changedBits & 0x20u) result |= (uint64_t{0x1F} << baseSlot);
+        return result;
+    }
+
+    // スロット割り当て: メロディ ch0-8 → 0-8、リズム5楽器 → 9-13
+    static uint64_t keyChannelSlotMask(uint8_t reg, uint8_t changedBits) {
+        constexpr uint8_t kRhythmReg = (TType == ChipType::OPL2EX) ? 0xbd : 0x0e;
+        if (reg == kRhythmReg) return rhythmSlotMask(changedBits, 9u);
+        return uint64_t{1} << (reg & 0x0fu);
+    }
+
     MemoryYmfmInterface m_iface;
     ChipImpl           m_chip;
     uint32_t           m_clock;
     uint32_t           m_native_rate = 0;
     uint32_t           m_target_rate = 0;
     LinearResampler    m_resampler;
+    std::array<uint8_t, 256> m_lastKeyRegValue{};
 };
 
 // =========================================================

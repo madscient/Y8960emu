@@ -96,6 +96,34 @@ WIPからの主な変更点の記録（開発経緯）。最終的な仕様は `
   `ProductName`/`InternalName`/`OriginalFilename` に残っていたYMEngine由来の
   `YMFMEngine` を修正した。
 
+## 修正: 短い間隔の KEY OFF → KEY ON で KEY OFF が無視される
+
+症状: 同じチャンネルに KEY OFF と KEY ON を短い間隔で書き込むと、KEY OFF が
+効かず（リリースも再アタックも起きず）前の音がそのまま続く。
+
+原因: `FmEngine::generate()` がキューの書き込みを全部適用してから一括生成して
+いた。ymfm はキーオンビットの書き込みを即座にエンベロープへ反映せず、次の
+サンプル生成時 (`fm_operator::clock_keystate`) にその時点のキー状態だけを見る
+ため、1バッファ内の KEY OFF → KEY ON は「ずっと KEY ON」に見える。
+
+対処: 兄弟リポジトリ YMEngine で同じ症状に入れた修正
+（同一チャンネル衝突時のみ約2ms先行生成する方式、リズムレジスタの打楽器別
+スロット分解を含む）を移植した。
+- `FmChip::keyOnTransitionMask()` を追加し、`FmChipImpl` でチップ種別ごとに
+  キーオン関連ビット (OPL2EX: 0xB0-0xB8 bit5 / 0xBD bit0-5、
+  OPLLEX: 0x20-0x28 bit4 / 0x0E bit0-5) の変化をチャンネルスロットに変換。
+- YMEngine 版からの差分: 対象を Y8960 の2チップに限定。両チップとも
+  port によらず同一レジスタ空間なので、直前値キャッシュは port で分けない。
+  OPL2 のチャンネルキーオンは 0xB0-0xBF ではなく実在する 0xB0-0xB8 に絞った。
+- ADPCM-B の START (reg 0x07) は ymfm 側で書き込み時に即時処理される
+  (`adpcm_b_channel::write` → `load_start()`) ため対象外とした。
+
+見送り: `LinearResampler::process()` は毎回 +2 の余裕分を含めてチップを
+進めるが、実際に消費した分しか位相から引かないため、呼び出しを分割するほど
+チップ時間が出力時間より先行する可能性がある（コードを読んだ見立て・未検証。
+YMEngine も同一実装）。本修正で衝突時に分割呼び出しが増えるが、今回の症状とは
+別問題として手を付けていない。
+
 ## 動作確認
 
 `smoke_test.cpp`:
@@ -120,4 +148,10 @@ supported chips: 2
 [OK] rhythm channel (BD) follows its own channel's BANK too
 [OK] default (CC BY-SA) presets produce sound
 [OK] default presets differ across all 4 banks
+```
+
+`keyoff_retrigger_test.cpp`（修正前のヘッダでは両チップとも `after OFF/ON=0.0000` で FAIL）:
+```
+[OK] OPL2EX: attack=0.1204 held=0.0000 after OFF/ON=0.1216
+[OK] OPLLEX: attack=0.1036 held=0.0000 after OFF/ON=0.1045
 ```

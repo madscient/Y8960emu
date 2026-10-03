@@ -1,6 +1,6 @@
 # Y8960emu アーキテクチャ設計書
 
-版: 1.2
+版: 1.3
 対象リポジトリ: `Y8960emu`
 
 本書は実装済みの最終アーキテクチャを説明する。開発経緯（バグ修正・設計変更の経緯）は
@@ -13,6 +13,7 @@
 | [Y8960_Cartridge](https://github.com/hra1129/Y8960_Cartridge) `doc/manual` | プログラマーズマニュアル(docx)。I/Oマップ・メモリマップの一次情報 |
 | 同 `doc/spec/Y8960_Specifications.xlsx` | レジスタ仕様(xlsx)。`OPLL-EX` / `OPL2+ADPCM` シートを使用（`ssg` / `dcsg` / `SCC` シートはスコープ外） |
 | [FMEngineTest](https://github.com/madscient/FMEngineTest) `docs/FmEngineApi.md` | 成果物DLLが準拠するC ABI仕様 |
+| 同 `include/FmEngineApi.h` | C ABIのヘッダの正本。本リポジトリの `src/FmEngineApi.h` はその写し（直接編集しない） |
 | [YMEngine](https://github.com/madscient/YMEngine)（madscient） | 標準ymfmチップをFmEngineApi準拠DLLにする実装。Layer 2〜4のテンプレートとして流用 |
 | [DSAemuEngine](https://github.com/madscient/DSAemuEngine)（madscient） | digital-sound-antiques系コアをFmEngineApi準拠DLLにする実装。`SSG`/`SCC`/`DCSG`を提供 |
 | `extern/ymfm`（aaronsgiles/ymfm, submodule） | コアDSP実装。OPL2(`ym3812`)/OPLL(`opll_base`, `opll_registers`)/ADPCM-B(`adpcm_b_engine`)を利用 |
@@ -67,7 +68,9 @@ YMEngineの3層構造に、Y8960固有の拡張チップ層を加えた4層構�
 
 Layer 2〜4はYMEngineの `FmChip.h` / `FmEngine.h` / `FmEngineApi.cpp` をベースに、
 `ChipType` enum と `FmChipImpl` 特殊化に `OPL2EX` / `OPLLEX`
-を追加したもの（`FmEngineApi.*` は無変更で流用）。
+を追加したもの。`FmEngineApi.h` はFMEngineTestにある正本の写しで、宣言のうち
+`FmEngineApi.cpp` が定義した関数だけがエクスポートされる（4節）。
+`FmEngineApi.def` には同じ一覧を書いておく。
 
 `FmEngine.h` の `generate()` は、キューに溜まった書き込みのうち同じチャンネルの
 キーオン/オフ状態を再び変える書き込みが来たとき、その書き込みを保留し、前の状態の
@@ -97,9 +100,10 @@ KEY OFF が無視される。どの書き込みがどのチャンネルのキー
   実機は2回路搭載のため、`FmEngine_AddChip(handle, "OPL2EX", ...)` を
   2回呼んで2インスタンスを作り、アプリ側はどちらのポートに書かれたかで
   `chip_id`を振り分ける（`SetGain`によるパン設定もこの単位で行える）。
-- ADPCM-Bメモリは `FmEngine_SetMemory(FM_MEM_ADPCM_B, ...)` 経由で外部から
+- ADPCM-Bメモリは `FmEngine_SetMemory` にメモリの名前 `ADPCM_B` を指定して外部から
   供給される（`ymfm_interface::ymfm_external_read/write` 経由、
-  YMEngineの `MemoryYmfmInterface` パターンを流用）。
+  YMEngineの `MemoryYmfmInterface` パターンを流用）。渡されたポインタを複製せずに
+  参照し、チップからの書き込みは捨てる。
 
 ### 3.2 y8960opllex（拡張OPLL部）
 
@@ -133,7 +137,7 @@ OPL2部と同様、実機は2回路搭載のため `AddChip` を2回呼ぶ。
 
 ## 4. Layer 2〜4: DLL側の設計
 
-YMEngineの実装をベースラインとして、以下の差分のみを加えている。
+YMEngineの実装をベースラインとしている。本DLLでの構成は以下のとおり。
 
 - `FmChip.h` の `ChipType` enumに `OPL2EX`, `OPLLEX` を追加。
 - **出力ミキシング方針**: 実機はチップ外側に独立したデジタルミキサーを持ち、
@@ -144,7 +148,18 @@ YMEngineの実装をベースラインとして、以下の差分のみを加え
   （-1/-2）持つため、`AddChip`を2回呼んで得た2つの`chip_id`にそれぞれ
   `SetGain`すればよい（1インスタンスに複数回路を内包していないため、
   この方式がそのまま機能する）。
-- `FmEngine_SetMemory` はOPL2EX(ADPCM-B)のみ対応。
+- **クロック**: 既定のクロックは持たない。`createChip()` / `createChipByName()` は
+  clock が 0 なら `nullptr` を返し、`FmEngine_AddChip` は `FM_ERR_INVALID_ARG` を返す。
+- **エクスポートする関数**: 必須の11関数と、外部メモリの3関数
+  （`FmEngine_GetMemoryCount` / `FmEngine_GetMemoryName` / `FmEngine_SetMemory`）。
+  部位ごとのゲインの4関数と `FmEngine_SetMemoryEx` はヘッダに宣言があるが、
+  定義しておらず、エクスポートしない（仕様上は任意）。どちらのチップも出力が
+  1系統なので、部位を持たない。
+- **外部メモリ**: チップが持つ外部メモリは `FmChip.h` の `chipMemories()` の表で
+  決まり、表の添字が `FmEngine_GetMemoryName` の index になる。今あるのは
+  OPL2EX の `ADPCM_B` だけで、OPLLEX は持たない。OPL2EX は仕様書の表に無い
+  チップなので名前はエンジンが決めるが、同じチップ名を提供するDSAemuEngineと
+  揃えてある。
   OPLLexの拡張音色ROMは現状コンパイル時埋め込みのみで、
   `FmEngineApi`層からの動的差し替え経路は未整備（README「未対応・既知の課題」参照）。
 
@@ -162,6 +177,8 @@ Y8960emu/
 │   ├── FmEngineApi.h/.cpp/.def/.rc Layer4: DLL公開Cファサード
 ├── _test/
 │   ├── smoke_test.cpp             DLL経由の動作確認テスト
+│   ├── chip_clock_test.cpp        クロック 0 の拒否と、渡したクロックが届くことの回帰テスト
+│   ├── test_clocks.h              テストがチップに渡すクロック
 │   ├── opllex_bank_test.cpp       拡張OPLLのチャンネル独立バンク回帰テスト
 │   ├── keyoff_retrigger_test.cpp  短間隔 KEY OFF → KEY ON の回帰テスト
 │   └── opl2ex_wse_test.cpp        拡張OPL2の波形選択が WSE に従うことの回帰テスト

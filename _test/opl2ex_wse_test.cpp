@@ -7,13 +7,14 @@
 //   WSE=1 : 半波サイン → 負側が出ない
 //
 #include "FmEngine.h"
+#include "test_clocks.h"
 #include <algorithm>
 #include <cstdio>
 #include <vector>
 
 static float minAfterAttack(bool wse) {
     FmEngine eng(48000);
-    const uint32_t id = eng.addChipByName("OPL2EX");
+    const uint32_t id = eng.addChipByName("OPL2EX", kTestClock);
     if (wse) eng.write(id, 0x01, 0x20);
     eng.write(id, 0x20, 0x21); eng.write(id, 0x40, 0x3F); eng.write(id, 0x60, 0xFF); eng.write(id, 0x80, 0x0F);
     eng.write(id, 0x23, 0x21); eng.write(id, 0x43, 0x00); eng.write(id, 0x63, 0xF0); eng.write(id, 0x83, 0x0F);

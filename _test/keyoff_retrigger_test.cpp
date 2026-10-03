@@ -12,6 +12,7 @@
 //   hit : 減衰しきった打楽器。KEY OFF が観測されれば再び打撃が立ち上がる。
 //
 #include "FmEngine.h"
+#include "test_clocks.h"
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -89,7 +90,7 @@ enum class Mode { Batch, Crowd, Tiny };
 
 static bool run(const Case& c, Mode mode) {
     FmEngine eng(kRate);
-    const uint32_t id = eng.addChipByName(c.chip);
+    const uint32_t id = eng.addChipByName(c.chip, kTestClock);
     c.setup(eng, id);
     for (size_t i = 0; i < c.otherCount; ++i) eng.write(id, c.others[i].reg, c.others[i].on);
     eng.write(id, c.target.reg, c.target.on);

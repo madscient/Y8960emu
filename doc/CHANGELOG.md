@@ -166,6 +166,150 @@ N × 約2ms 遅れる（設計から導いた値・遅れ量は測っていな�
   `opl_registers_base` のコメント1行と `op_waveform()` のみ）。
   `opllex_bank_test.cpp` は更新前後とも全項 OK。
 
+## FmEngineApi の改定に追従
+
+FMEngineTest `ca502c5` の `docs/FmEngineApi.md` と `include/FmEngineApi.h` に
+合わせた。本DLLが追従していなかった改定は次の3つ。
+
+- `FmEngine_AddChip` の clock=0（標準クロック）の廃止
+- 外部メモリを名前の文字列で指定する方式への変更
+- `FmEngine_GetNativeRate` の廃止
+
+### 変更点
+
+- `src/FmEngineApi.h` を、FMEngineTest の `include/FmEngineApi.h` の写しに
+  差し替えた。以後このファイルは直接編集せず、正本が変わったら写し直す。
+- `FmEngine_AddChip`: clock が 0 なら `FM_ERR_INVALID_ARG` を返す。`FmClock` と
+  `ChipEntry::defaultClock` を削除し、`createChip()` / `createChipByName()` /
+  `FmEngine::addChip()` / `addChipByName()` のクロックの既定引数を無くした。
+  引数の検査を名前の検索より先に行い、メモリ確保の失敗は例外を外へ出さずに
+  `FM_ERR_ALLOC` で返す（YMEngine `7d8ed2d` と同じ形）。
+- `FmEngine_GetNativeRate` を削除した。`FmChip::nativeRate()` は残してある
+  （`chip_clock_test.cpp` が、クロックが届いたことを見るのに使う）。
+- 外部メモリ: `FmEngine_GetMemoryCount` / `FmEngine_GetMemoryName` を追加し、
+  `FmEngine_SetMemory` の第3引数を名前の文字列にした。`FmMemoryType` と
+  `FmEngine_GetMemorySize` を削除した。OPL2EX が `ADPCM_B` を1つ持ち、OPLLEX は
+  持たない。
+- エクスポートは14関数（必須11、外部メモリ3）。変更前から
+  `FmEngine_GetNativeRate` と `FmEngine_GetMemorySize` が減り、
+  `FmEngine_GetMemoryCount` と `FmEngine_GetMemoryName` が増えた。
+
+`FmEngine_SetMemory` は、引数の形のほかに次の挙動が変わった。変更前の挙動は
+コードを読んだもので、走らせたのは OPL2EX に番号 2 を渡した場合だけ。
+
+- 変更前は、どの番号を渡しても、どちらのチップでも `FM_OK` を返していた
+  （`MemoryYmfmInterface::getRegion()` が ADPCM-B の領域に読み替える。OPLLEX では
+  渡したメモリは使われない）。変更後は、OPL2EX に `ADPCM_B` を渡したときだけ
+  受け付け、それ以外は `FM_ERR_INVALID_ARG` を返す。
+- 未知の chip_id は `FM_ERR_INVALID_ARG` を返す。変更前は `assert` だけだった。
+
+### 互換性
+
+- **番号で指定する形でビルドした呼び出し側を、このDLLと組み合わせてはいけない。**
+  DLL は第3引数の番号を文字列のポインタとして読む。
+  **確認済み**: 変更前の形（第3引数に整数 2）で `FmEngine_SetMemory` を呼ぶ小さな
+  プログラムを変更後のDLLに当てると、アクセス違反で落ちる。変更前のDLLでは
+  `FM_OK` が返る（対照）。
+  Y8960Sequencer `13050cb` は、チップを用意する処理の中で、2回路の OPL2EX
+  それぞれにこの形で `FmEngine_SetMemory` を呼ぶ（ソースを読んだ。組み合わせて
+  走らせてはいない）。呼び出し側は、`FmEngine_GetMemoryCount` の有無でDLLの
+  世代を見分け、名前で指定する形に直す必要がある。
+- clock に 0 を渡していた呼び出し側は `FM_ERR_INVALID_ARG` になる。変更前の
+  既定値は、両チップとも 3,579,545 Hz だった。
+- `FmEngine_GetNativeRate` / `FmEngine_GetMemorySize` を読み込む呼び出し側は、
+  シンボルが見つからない。
+
+前提: 番号で指定する形の呼び出し側と、このDLLを組み合わせて使わないこと
+（仕様側の決定の前提と同じ）。
+
+やり直しの値段: 外部メモリの名前 `ADPCM_B` を変えるなら、このリポジトリでは
+`FmChip.h` の表の1行と `smoke_test.cpp`、README、設計書。ただし名前は外に出る値で、
+DSAemuEngine の OPL2EX と揃えてあるので、変えるときは DSAemuEngine と、名前を
+書いたアプリケーションにも及ぶ。
+
+### 仕様に定めが無く、こちらで決めたこと
+
+- OPL2EX の外部メモリの名前は `ADPCM_B`。OPL2EX は仕様書の「外部メモリの名前」の
+  表に無いチップで、名前はエンジンが決める。同じチップ名を提供する DSAemuEngine
+  `c3c2d18` が OPL2EX に `ADPCM_B` を使っているので、それに揃えた
+  （DSAemuEngine の README とソースを読んだ）。
+- 部位ごとのゲインの4関数はエクスポートしない。OPL2EX も OPLLEX も、チップの
+  外のミキサーへモノラルで出す設計で、部位に分ける出力が無い。DSAemuEngine の
+  OPL2EX / OPLLEX も部位を持たない（同上）。
+- `FmEngine_SetMemory` の `data` が NULL のときと `size` が 0 のときは、変更前と
+  同じく `FM_ERR_INVALID_ARG`（仕様はこの場合を定めていない）。
+- `data` を複製せずに参照するのは、変更前のまま。複製か参照かを仕様は
+  エンジンに任せているが、Y8960Sequencer `13050cb` は渡した後でメモリの中身を
+  書くので（ソースを読んだ）、参照であることに依存している。チップからの
+  書き込みを捨てるのも変更前のままで、こちらは仕様の定め（エンジンは `data` に
+  書き込まない）にあたる。どちらも `smoke_test.cpp` に確認を足した。
+
+### 見送ったこと
+
+- `FmEngine_SetMemoryEx`（任意）のエクスポート。理由: 今回は既存の関数を改定に
+  合わせる作業で、未実装の任意の関数を足すのは別の作業になる。仕様は、外部
+  メモリのバスが外に出ているチップを扱うエンジンにエクスポートを勧めている。
+  無い間は、チップからの書き込みを呼び出し側のメモリに反映させる構成（RAM の
+  共有）を表せない。読み出しの共有は、同じ `data` を2回路に渡せばできる。
+  足すときの値段: `MemoryYmfmInterface` に割り当ての表（番地の範囲、ポインタ、
+  ROM か RAM か）を持たせ、重なりの検出と解除を書き、`.def` とテストを足す。
+  YMEngine `ac29207` に番号で指定する形の実装がある（コミットの題と、テストの
+  ファイルがあることしか見ていない）。
+- ヘッダが正本の写しのままであることの自動検査（FMgenEngine の
+  `cmake/CheckApiHeader.cmake` にあたるもの）。理由: 今回の作業の範囲外。今回は
+  `diff` で正本との一致を確かめた。
+- `FmEngine_Write` / `FmEngine_SetGain` / `FmEngine_GetGain` の chip_id の範囲検査。
+  今は `assert` だけ（コードを読んだ）。仕様が未知の chip_id の戻り値を定めて
+  いるのは外部メモリの関数だけなので、今回は触っていない。
+
+### 確認
+
+**確認済み**（Windows、MSVC 19.51 x64、Release。ymfm はこのリポジトリが記録して
+いる `81aec25`。DLL は `CMakeLists.txt` から NMake Makefiles ジェネレータで
+ビルドし、テストは `cl` で直接ビルドした）:
+
+- `src/FmEngineApi.h` は、FMEngineTest `ca502c5` の `include/FmEngineApi.h` と
+  一致する（`diff`）。
+- DLL のエクスポートは14関数（`dumpbin /exports`）。仕様書の「エクスポート
+  シンボル一覧」と突き合わせると、必須11のうち11、外部メモリ3のうち3、部位
+  ごとのゲイン4のうち0で、`FmEngine_SetMemoryEx` は無い。一覧に無いエクスポートは
+  無い。Visual Studio 18 2026 ジェネレータでビルドしたDLLも同じ14関数で、
+  `smoke_test` が全項 OK。
+- エクスポートされるのは `FmEngineApi.cpp` が定義した関数で、`FmEngineApi.def` から
+  1行抜いてもエクスポートは変わらない（MSVC）。
+- ビルドの警告は変更前と同じ2件（`FmEngine.h` の C4324、`FmEngineApi.cpp` の
+  C4005）。
+- `smoke_test` / `chip_clock_test` / `keyoff_retrigger_test` / `opl2ex_wse_test` /
+  `opllex_bank_test` が全項 OK。後ろの3本の出力は、下の「動作確認」に記録して
+  あったものと一字一句同じ（クロックに 3,579,545 Hz を明示しても、既定値だった
+  ときと出力が変わらない）。
+- 追加した項は、その挙動が無ければ落ちる（対照）。ソースの写しを1か所ずつ壊して
+  ビルドし、走らせた:
+  - clock=0 の検査を外す → `smoke_test` の clock=0 の2項と、`chip_clock_test` の
+    reject 2項が FAIL
+  - 名前を比べずに受け付ける → `smoke_test` の名前の拒否と `SetMemory(PCM)` の
+    2項が FAIL
+  - `FmEngine_SetMemory` が `FM_OK` を返すだけでメモリをつながない →
+    `the chip plays it` が FAIL（差 0.0000）
+  - `data` を複製する → `data is referenced` が FAIL
+  - チップからの書き込みを通す → `chip writes never reach` が FAIL（4 bytes changed）
+  - 変更前のソース（`28073e5`）に `chip_clock_test` を当てる → reject 2項が FAIL
+- FMEngineTest `ca502c5` の `src/main.cpp` をビルドしたテストツールが、変更後の
+  DLLをロードできる。OPL2EX と OPLLEX を 3,579,545 Hz で鳴らすパッチ（同リポジトリの
+  `opl2.json` / `opll.json` の内容を、チップ名だけ替えて使った）を WAV に書き出すと、
+  変更前のDLLで書き出したものとバイト一致する（無音ではない）。ログには、変更後の
+  DLLで `[MEM] OPL2EX ADPCM_B` の行が、変更前のDLLで
+  `FmEngine_GetMemoryCount is not exported` の断りが出る。
+- MinGW-w64 の g++ 8.3.0 でも、README の直接ビルドのコマンドの形でDLLと
+  `smoke_test` / `chip_clock_test` をビルドでき、全項 OK。
+
+**未検証**:
+
+- Linux / macOS でのビルド（手元に無い）。
+- `FmEngine_AddChip` が `FM_ERR_ALLOC` を返す経路（メモリ確保を失敗させていない）。
+- 実際のアプリケーションとの組み合わせ。名前で指定する形に直した呼び出し側は、
+  上のテストとテストツールしか無い。
+
 ## 動作確認
 
 `smoke_test.cpp`:
@@ -173,12 +317,37 @@ N × 約2ms 遅れる（設計から導いた値・遅れ量は測っていな�
 supported chips: 2
   - OPL2EX
   - OPLLEX
-[OK] AddChip(OPL2EX) -> id=0 nativeRate=49715
-[OK] AddChip(OPLLEX) -> id=1 nativeRate=49715
-[OK] AddChip(NOSUCHCHIP) -> -2 (expect FM_ERR_UNKNOWN_CHIP)
+[OK] GetSupportedChip is null past the last chip
+[OK] GetSampleRate
+[OK] AddChip(OPL2EX) -> 0, id=0
+[OK] AddChip(OPLLEX) -> 0, id=1
+[OK] AddChip(NOSUCHCHIP) -> -2 (expect -2)
+[OK] AddChip(OPL2EX, clock=0) -> -1 (expect -1)
+[OK] rejected AddChip adds no chip
+[OK] SetGain / GetGain round trip
+[OK] OPL2EX has one external memory, ADPCM_B
+[OK] OPLLEX has no external memory
+[OK] unknown chip_id: GetMemoryCount is 0, GetMemoryName is null
+[OK] SetMemory rejects a name the chip does not have, the wrong case, and null
+[OK] SetMemory rejects a chip without the memory and an unknown chip_id
+[OK] SetMemory(ADPCM_B) -> 0 and the chip plays it (max diff from no memory 0.1940)
+[OK] SetMemory(PCM) -> -1 and the output stays as with no memory (max diff 0.0000)
+[OK] data is referenced, not copied: bytes written after SetMemory are played (max diff 0.0000)
+[OK] chip writes never reach the data given to SetMemory (0 bytes changed)
 [OK] Generate -> 0
 [OK] NaN check
 [OK] Inf check
+ALL PASSED (0 failures)
+```
+
+`chip_clock_test.cpp`:
+```
+[OK] reject OPL2EX clock=0
+[OK] reject OPLLEX clock=0
+[OK] reject unknown name
+[OK] pass OPL2EX clock 3579545 -> 3579545, 7159090 -> 7159090; native 49715 -> 99431
+[OK] pass OPLLEX clock 3579545 -> 3579545, 7159090 -> 7159090; native 49715 -> 99431
+ALL PASSED (0 failures)
 ```
 
 `opllex_bank_test.cpp`:

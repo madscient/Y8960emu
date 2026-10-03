@@ -14,6 +14,9 @@ Y8960 Cartridge に搭載予定の統合音源チップ）のソフトウェア�
 ## 対応チップ
 
 `FmEngine_AddChip()` に渡すチップ名文字列と、対応するY8960の機能ブロック。
+`clock` は必ず指定する（既定のクロックは持たない。0 は `FM_ERR_INVALID_ARG`）。
+例: `FmEngine_AddChip(handle, "OPL2EX", 3579545, &chip_id)`
+（3,579,545 Hz は MSX のマスタークロック）。
 
 | チップ名 | Y8960の機能ブロック | 実装クラス | 備考 |
 |---|---|---|---|
@@ -56,6 +59,36 @@ SSGを含める場合（後述）は、SSG1/SSG2用に`chip_id`を2つ用意し�
 アプリ側でアドレスレジスタの値（`< 0x10` か `>= 0x10` か）を見て
 どちらのチップへ書き込むかをルーティングする必要がある
 （実機のSSGブロックは単一のI/Oポート対でSSG1/SSG2を共有しているため）。
+
+## FmEngineApi の対応範囲
+
+仕様は [FMEngineTest](https://github.com/madscient/FMEngineTest) の
+`docs/FmEngineApi.md`。`src/FmEngineApi.h` は同リポジトリの
+`include/FmEngineApi.h` の写しで、直接は編集しない。
+
+ヘッダが宣言する関数のうち、DLL がエクスポートするのは次のもの。任意の関数は、
+呼び出す前に `GetProcAddress` / `dlsym` で有無を確かめること。
+
+| 仕様の区分 | 対応 |
+|---|---|
+| 必須の11関数 | エクスポートする |
+| 部位ごとのゲイン（任意、4関数） | エクスポートしない。どちらのチップも出力は1系統で、ゲインは `FmEngine_SetGain` で指定する |
+| 外部メモリ（任意、3関数） | エクスポートする |
+| 外部メモリの割り当て（任意、`FmEngine_SetMemoryEx`） | エクスポートしない |
+
+### 外部メモリ
+
+`FmEngine_GetMemoryCount` / `FmEngine_GetMemoryName` で列挙できる。
+
+| チップ名 | 外部メモリの名前 | 内容 |
+|---|---|---|
+| `OPL2EX` | `ADPCM_B` | ADPCM-B のメモリ |
+| `OPLLEX` | なし（`FmEngine_GetMemoryCount` は 0） | |
+
+- `FmEngine_SetMemory` は `data` を複製せず、そのまま参照する。チップを使っている間は
+  解放しないこと。2回路の `OPL2EX` に同じ `data` を渡せば、同じ内容を読む。
+- チップからの書き込み（レジスタ経由のメモリ書き込み）は `data` に届かず、捨てられる。
+- `data` が `NULL` のときと `size` が 0 のときは `FM_ERR_INVALID_ARG`。
 
 ## スコープ: SSG / DCSG / SCC は対象外
 
@@ -100,8 +133,10 @@ g++ -std=c++17 -O2 -I src -I extern/ymfm/src _test/opllex_bank_test.cpp src/opll
 ./opllex_bank_test
 ```
 
-`_test/smoke_test.cpp` はDLLの2チップすべてのAddChip/Write/Generateが正常動作すること
-（NaN/Infを出さないこと）を確認する。`_test/opllex_bank_test.cpp` は拡張OPLL部の
+`_test/smoke_test.cpp` はDLLがエクスポートする関数をすべて呼び、2チップの
+AddChip/Write/Generateが正常動作すること（NaN/Infを出さないこと）、クロック 0 と
+未知の名前を拒否すること、外部メモリを名前で指定して `OPL2EX` の ADPCM-B が鳴る
+ことを確認する。`_test/opllex_bank_test.cpp` は拡張OPLL部の
 チャンネル独立バンク切替が正しく機能することをホワイトボックスで検証する。
 
 ## 未対応・既知の課題
@@ -110,8 +145,8 @@ g++ -std=c++17 -O2 -I src -I extern/ymfm/src _test/opllex_bank_test.cpp src/opll
    実機のリズム音色ROMがバンクごとに異なるかどうかは未確認。
 2. **`FmEngineApi`層からの`set_bank_instrument_data()`呼び出し経路が未整備**:
    現状は `y8960opllex` を直接使うC++コードからしか設定できない。
-   `FmEngine_SetMemory` の `FmMemoryType` 拡張などでDLL越しに設定できるようにするか、
-   要検討。
+   `OPLLEX` に外部メモリの名前を足して `FmEngine_SetMemory` で渡せるようにするなど、
+   DLL越しに設定できるようにするか、要検討。
 
 ## ライセンス
 

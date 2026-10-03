@@ -33,12 +33,39 @@ enum class ChipType {
 };
 
 // =========================================================
-//  標準クロック定数
-//  Y8960 CartridgeはMSX用カートリッジのため、MSX標準クロックを既定値とする。
+//  外部メモリの表
+//  FmEngine_GetMemoryName が返す名前と並び (添字が index)。
+//  OPL2EX は FmEngineApi 仕様書の表に無いチップで、名前はエンジンが決める。
+//  同じチップ名を提供する DSAemuEngine と揃えて ADPCM_B にしてある。
 // =========================================================
-namespace FmClock {
-    constexpr uint32_t OPL2EX = 3'579'545;
-    constexpr uint32_t OPLLEX = 3'579'545;
+struct MemoryEntry {
+    const char*        name;
+    ymfm::access_class access;
+};
+
+struct MemoryList {
+    const MemoryEntry* entries;
+    uint32_t           count;
+};
+
+inline MemoryList chipMemories(ChipType type) {
+    static const MemoryEntry kOpl2Ex[] = {
+        { "ADPCM_B", ymfm::ACCESS_ADPCM_B },
+    };
+    switch (type) {
+        case ChipType::OPL2EX: return { kOpl2Ex, 1 };
+        case ChipType::OPLLEX: return { nullptr, 0 };
+    }
+    return { nullptr, 0 };
+}
+
+// チップが持たない名前と nullptr は nullptr
+inline const MemoryEntry* findChipMemory(ChipType type, const char* name) {
+    if (!name) return nullptr;
+    const MemoryList m = chipMemories(type);
+    for (uint32_t i = 0; i < m.count; ++i)
+        if (std::strcmp(m.entries[i].name, name) == 0) return &m.entries[i];
+    return nullptr;
 }
 
 // =========================================================
@@ -114,10 +141,15 @@ public:
     virtual const char* name()  const = 0;
     virtual uint32_t    clock() const = 0;
 
-    // 外部メモリの設定 (拡張OPL2部のADPCM-B RAM/ROM用)
-    virtual void        setMemory(ymfm::access_class access_type,
-                                  const uint8_t* data, uint32_t size) {}
-    virtual uint32_t    memorySize(ymfm::access_class access_type) const { return 0; }
+    // 外部メモリ (拡張OPL2部のADPCM-B RAM/ROM用)。名前は chipMemories() の表。
+    uint32_t    memoryCount() const { return chipMemories(type()).count; }
+    const char* memoryName(uint32_t index) const {
+        const MemoryList m = chipMemories(type());
+        return index < m.count ? m.entries[index].name : nullptr;
+    }
+    // チップが持たない名前と nullptr は false。data は複製せず参照する。
+    virtual bool        setMemory(const char* memory,
+                                  const uint8_t* data, uint32_t size) = 0;
 
     // このレジスタ書き込みでキーオン/オフ状態が変化するチャンネルスロットの
     // ビットマスク。変化しなければ 0。FmEngine::generate() が同一チャンネルの
@@ -170,10 +202,6 @@ public:
         mem.writeable = true;
     }
 
-    uint32_t memorySize(ymfm::access_class type) const {
-        return getRegion(type).size;
-    }
-
 private:
     struct MemRegion {
         const uint8_t*      data      = nullptr;
@@ -191,9 +219,6 @@ private:
             case ymfm::ACCESS_ADPCM_B: return m_adpcm_b;
             default:                   return m_adpcm_b; // fallback
         }
-    }
-    const MemRegion& getRegion(ymfm::access_class type) const {
-        return const_cast<MemoryYmfmInterface*>(this)->getRegion(type);
     }
 };
 
@@ -223,13 +248,12 @@ public:
         m_resampler.setup(m_native_rate, target_rate);
     }
 
-    void setMemory(ymfm::access_class access_type,
+    bool setMemory(const char* memory,
                    const uint8_t* data, uint32_t size) override {
-        m_iface.setMemory(access_type, data, size);
-    }
-
-    uint32_t memorySize(ymfm::access_class access_type) const override {
-        return m_iface.memorySize(access_type);
+        const MemoryEntry* e = findChipMemory(TType, memory);
+        if (!e) return false;
+        m_iface.setMemory(e->access, data, size);
+        return true;
     }
 
     uint64_t keyOnTransitionMask(uint32_t port, uint8_t reg, uint8_t value) override {
@@ -348,24 +372,26 @@ template<> inline const char* FmChipImpl<ymfm::y8960opllex, ChipType::OPLLEX>::n
 // =========================================================
 template<>
 inline FmChipImpl<ymfm::y8960opl2ex, ChipType::OPL2EX>::FmChipImpl(uint32_t clock)
-    : m_chip(m_iface), m_clock(clock ? clock : FmClock::OPL2EX)
+    : m_chip(m_iface), m_clock(clock)
 { m_chip.reset(); m_native_rate = m_chip.sample_rate(m_clock); }
 
 template<>
 inline FmChipImpl<ymfm::y8960opllex, ChipType::OPLLEX>::FmChipImpl(uint32_t clock)
-    : m_chip(m_iface), m_clock(clock ? clock : FmClock::OPLLEX)
+    : m_chip(m_iface), m_clock(clock)
 { m_chip.reset(); m_native_rate = m_chip.sample_rate(m_clock); }
 
 // =========================================================
 //  ファクトリ関数 (ChipType版)
+//  clock (Hz) が 0 なら nullptr。既定のクロックは持たない。F-Number などの
+//  レジスタ値は、呼び出し側がクロックを前提に計算するため。
 // =========================================================
-inline std::unique_ptr<FmChip> createChip(ChipType type, uint32_t clock = 0) {
-    auto resolve = [](uint32_t c, uint32_t def) { return c ? c : def; };
+inline std::unique_ptr<FmChip> createChip(ChipType type, uint32_t clock) {
+    if (clock == 0) return nullptr;
     switch (type) {
         case ChipType::OPL2EX:
-            return std::make_unique<FmChipImpl<ymfm::y8960opl2ex, ChipType::OPL2EX>>(resolve(clock, FmClock::OPL2EX));
+            return std::make_unique<FmChipImpl<ymfm::y8960opl2ex, ChipType::OPL2EX>>(clock);
         case ChipType::OPLLEX:
-            return std::make_unique<FmChipImpl<ymfm::y8960opllex, ChipType::OPLLEX>>(resolve(clock, FmClock::OPLLEX));
+            return std::make_unique<FmChipImpl<ymfm::y8960opllex, ChipType::OPLLEX>>(clock);
     }
     return nullptr;
 }
@@ -376,14 +402,13 @@ inline std::unique_ptr<FmChip> createChip(ChipType type, uint32_t clock = 0) {
 struct ChipEntry {
     const char* name;
     ChipType    type;
-    uint32_t    defaultClock;
 };
 
 inline const ChipEntry* chipTable() {
     static const ChipEntry kTable[] = {
-        { "OPL2EX", ChipType::OPL2EX, FmClock::OPL2EX },
-        { "OPLLEX", ChipType::OPLLEX, FmClock::OPLLEX },
-        { nullptr,  ChipType::OPL2EX, 0               },  // sentinel
+        { "OPL2EX", ChipType::OPL2EX },
+        { "OPLLEX", ChipType::OPLLEX },
+        { nullptr,  ChipType::OPL2EX },  // sentinel
     };
     return kTable;
 }
@@ -394,11 +419,12 @@ inline uint32_t chipTableSize() {
     return n;
 }
 
-inline std::unique_ptr<FmChip> createChipByName(const char* name, uint32_t clock = 0) {
+// 未知の名前か clock が 0 なら nullptr
+inline std::unique_ptr<FmChip> createChipByName(const char* name, uint32_t clock) {
     if (!name) return nullptr;
     for (const ChipEntry* e = chipTable(); e->name; ++e) {
         if (std::strcmp(e->name, name) == 0)
-            return createChip(e->type, clock ? clock : e->defaultClock);
+            return createChip(e->type, clock);
     }
     return nullptr;
 }

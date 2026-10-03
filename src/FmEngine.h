@@ -78,15 +78,16 @@ public:
     explicit FmEngine(uint32_t sample_rate = 44100)
         : m_sample_rate(sample_rate) {}
 
-    // チップ追加 (ChipType 版)。clock=0 で標準クロックを使用。
-    uint32_t addChip(ChipType type, uint32_t clock = 0) {
+    // チップ追加 (ChipType 版)。clock はマスタークロック (Hz)。0 なら UINT32_MAX を返す。
+    uint32_t addChip(ChipType type, uint32_t clock) {
         auto chip = createChip(type, clock);
+        if (!chip) return UINT32_MAX;
         chip->setTargetRate(m_sample_rate);
         return registerChip(std::move(chip));
     }
 
-    // チップ追加 (文字列版)。未知の名前なら UINT32_MAX を返す。
-    uint32_t addChipByName(const char* name, uint32_t clock = 0) {
+    // チップ追加 (文字列版)。未知の名前か clock が 0 なら UINT32_MAX を返す。
+    uint32_t addChipByName(const char* name, uint32_t clock) {
         auto chip = createChipByName(name, clock);
         if (!chip) return UINT32_MAX;
         chip->setTargetRate(m_sample_rate);
@@ -129,33 +130,34 @@ public:
         out_r = m_gains[chip_id]->gain_r.load(std::memory_order_relaxed);
     }
 
-    uint32_t nativeRate(uint32_t chip_id) const {
-        if (chip_id >= m_chips.size()) return 0;
-        return m_chips[chip_id]->nativeRate();
-    }
-
     const char* getChipName(uint32_t chip_id) const {
         if (chip_id >= m_chips.size()) return nullptr;
         return m_chips[chip_id]->name();
     }
 
-    // 外部メモリ設定 (ADPCM/PCM ROM/RAM)
-    // chip_id: addChip() で取得した ID
-    // access_type: ymfm::ACCESS_ADPCM_A(1) / ACCESS_ADPCM_B(2) / ACCESS_PCM(3)
-    // data: ROM データへのポインタ (呼び出し元が寿命を管理すること)
-    // size: データサイズ (バイト)
-    // ※ オーディオスレッド起動前に呼ぶこと (スレッドセーフではない)
-    void setMemory(uint32_t chip_id, int access_type,
-                   const uint8_t* data, uint32_t size) {
-        assert(chip_id < m_chips.size());
-        m_chips[chip_id]->setMemory(
-            static_cast<ymfm::access_class>(access_type), data, size);
+    // チップが持つ外部メモリの数。未知の chip_id は 0
+    uint32_t memoryCount(uint32_t chip_id) const {
+        if (chip_id >= m_chips.size()) return 0;
+        return m_chips[chip_id]->memoryCount();
     }
 
-    uint32_t getMemorySize(uint32_t chip_id, int access_type) const {
-        if (chip_id >= m_chips.size()) return 0;
-        return m_chips[chip_id]->memorySize(
-            static_cast<ymfm::access_class>(access_type));
+    // index 番目の外部メモリの名前。範囲外と未知の chip_id は nullptr
+    const char* memoryName(uint32_t chip_id, uint32_t index) const {
+        if (chip_id >= m_chips.size()) return nullptr;
+        return m_chips[chip_id]->memoryName(index);
+    }
+
+    // 外部メモリ設定 (ADPCM ROM/RAM)
+    // chip_id: addChip() で取得した ID
+    // memory: 外部メモリの名前 (memoryName() が返すもの)
+    // data: データへのポインタ (呼び出し元が寿命を管理すること)
+    // size: データサイズ (バイト)
+    // 未知の chip_id、チップが持たない名前、nullptr は false を返す。
+    // ※ オーディオスレッド起動前に呼ぶこと (スレッドセーフではない)
+    bool setMemory(uint32_t chip_id, const char* memory,
+                   const uint8_t* data, uint32_t size) {
+        if (chip_id >= m_chips.size()) return false;
+        return m_chips[chip_id]->setMemory(memory, data, size);
     }
 
     // レジスタ書き込み (任意スレッドから呼べる)
